@@ -132,6 +132,8 @@ export const en = {
     snapshotFiles: "the snapshot files",
     httpsHint:
       "Pushing over HTTPS uses the GitHub account your keychain has saved. If this Mac has more than one account, an SSH address picks the account by its key:",
+    sshHint:
+      "SSH to this host uses your default key, which may belong to another GitHub account. An alias in ~/.ssh/config picks the account by its key:",
     useAddress: (url: string) => `Use ${url}`,
 
     location: {

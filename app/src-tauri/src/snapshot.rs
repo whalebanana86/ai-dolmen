@@ -59,13 +59,21 @@ pub async fn snapshot_checkout(
     })?;
     let clone = data.join("repositories").join(git::clone_dir_name(&url));
     let updated = if clone.join(".git").exists() {
-        if git::origin_url(&clone)?.as_deref() != Some(url.as_str()) {
-            return Err(Error::Storage {
-                message: format!(
-                    "{} already holds a clone of another repository; remove it to use {url}.",
-                    clone.display()
-                ),
-            });
+        match git::origin_url(&clone)? {
+            Some(origin) if origin == url => {}
+            // The same repository by another address, such as SSH instead of
+            // HTTPS: keep the clone, and any commits it hasn't pushed yet.
+            Some(origin) if git::same_repository(&origin, &url) => {
+                git::set_origin_url(&clone, &url)?
+            }
+            _ => {
+                return Err(Error::Storage {
+                    message: format!(
+                        "{} already holds a clone of another repository; remove it to use {url}.",
+                        clone.display()
+                    ),
+                });
+            }
         }
         git::sync(&clone)?
     } else {
@@ -79,7 +87,7 @@ pub async fn snapshot_checkout(
     })
 }
 
-/// SSH addresses to suggest for an HTTPS repository URL; see [`git::ssh_alternatives`].
+/// SSH addresses to suggest for a repository URL; see [`git::ssh_alternatives`].
 #[tauri::command]
 pub fn snapshot_ssh_alternatives(url: String) -> Vec<String> {
     git::ssh_alternatives(&url)

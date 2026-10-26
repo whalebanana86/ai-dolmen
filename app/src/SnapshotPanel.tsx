@@ -249,9 +249,10 @@ export function SnapshotPanel({
 }
 
 /**
- * Pushing over HTTPS uses whichever account the credential helper saved, which
- * fails when the Mac has several. Offers the repository's SSH addresses, one
- * per matching alias in ~/.ssh/config, which pick the account by key.
+ * Pushing over HTTPS uses whichever account the credential helper saved, and
+ * SSH to the plain host uses the default key; either fails when the Mac has
+ * several accounts. Offers the repository's SSH addresses, one per matching
+ * alias in ~/.ssh/config, which pick the account by key.
  */
 function SshHint({
   remote,
@@ -265,7 +266,6 @@ function SshHint({
 
   useEffect(() => {
     setAlternatives([]);
-    if (!remote.url.startsWith("https://")) return;
     snapshots
       .sshAlternatives(remote.url)
       .then(setAlternatives)
@@ -275,7 +275,7 @@ function SshHint({
   if (alternatives.length === 0) return null;
   return (
     <div className="ssh-hint">
-      <p className="muted">{t.snapshot.httpsHint}</p>
+      <p className="muted">{/^https?:\/\//.test(remote.url) ? t.snapshot.httpsHint : t.snapshot.sshHint}</p>
       {alternatives.map((url) => (
         <button key={url} onClick={() => onChooseRemote({ url, path: remote.path })}>
           {t.snapshot.useAddress(url)}

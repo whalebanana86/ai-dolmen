@@ -393,7 +393,19 @@ fn clones_syncs_and_pushes_a_schema_repository() {
     assert!(git::sync(&clone).unwrap(), "the teammate's commit arrives");
     assert_eq!(Snapshot::read(&folder).unwrap(), Snapshot::of(&changed));
     assert!(!git::sync(&clone).unwrap());
+
+    // Another address for the same repository keeps the clone.
+    let other_address = format!("{url}/");
+    assert!(git::same_repository(url, &other_address));
+    git::set_origin_url(&clone, &other_address).unwrap();
+    assert_eq!(
+        git::origin_url(&clone).unwrap().as_deref(),
+        Some(other_address.as_str())
+    );
+    assert!(!git::sync(&clone).unwrap());
+
     assert!(git::clone("--upload-pack=touch", &home.path().join("x")).is_err());
+    assert!(git::set_origin_url(&clone, "--upload-pack=touch").is_err());
 }
 
 #[test]

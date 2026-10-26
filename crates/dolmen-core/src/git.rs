@@ -169,36 +169,183 @@ pub fn origin_url(dir: &Path) -> Result<Option<String>, Error> {
     Ok(output.status.success().then(|| stdout(&output)))
 }
 
-/// SSH addresses for an HTTPS repository URL, one per `Host` alias in
-/// `~/.ssh/config` that points at the same host, then the plain host. Pushing
-/// over HTTPS uses whichever account the credential helper has saved; with
-/// several accounts on one machine, an SSH alias picks the account by its key.
+/// Points the `origin` remote at `url`, e.g. to switch from HTTPS to SSH.
+pub fn set_origin_url(dir: &Path, url: &str) -> Result<(), Error> {
+    if url.starts_with('-') {
+        return Err(storage(format!("{url:?} isn't a repository URL")));
+    }
+    run(dir, &["remote", "set-url", "origin", url])?;
+    Ok(())
+}
+
+/// Whether two URLs name the same repository, such as its HTTPS address and
+/// an SSH address through a `Host` alias in `~/.ssh/config`.
+pub fn same_repository(a: &str, b: &str) -> bool {
+    same_repository_with(a, b, &ssh_config())
+}
+
+fn same_repository_with(a: &str, b: &str, ssh_config: &str) -> bool {
+    let aliases = ssh_aliases(ssh_config);
+    match (remote_address(a), remote_address(b)) {
+        (Some(a), Some(b)) => {
+            a.real_host(&aliases)
+                .eq_ignore_ascii_case(b.real_host(&aliases))
+                && a.path.eq_ignore_ascii_case(b.path)
+        }
+        (None, None) => local_path(a) == local_path(b),
+        _ => false,
+    }
+}
+
+/// SSH addresses to suggest for a repository URL, one per `Host` alias in
+/// `~/.ssh/config` that points at its host. Pushing over HTTPS uses whichever
+/// account the credential helper has saved, and SSH to the plain host uses the
+/// default key; with several accounts on one machine, an alias picks the
+/// account by its key. HTTPS URLs also get the plain host's address; SSH URLs
+/// that already use an alias get nothing.
 pub fn ssh_alternatives(url: &str) -> Vec<String> {
-    let ssh_config = std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join(".ssh").join("config"))
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .unwrap_or_default();
-    ssh_alternatives_with(url, &ssh_config)
+    ssh_alternatives_with(url, &ssh_config())
 }
 
 fn ssh_alternatives_with(url: &str, ssh_config: &str) -> Vec<String> {
-    let Some(rest) = url.strip_prefix("https://") else {
+    let Some(address) = remote_address(url) else {
         return Vec::new();
     };
-    // Drop user info such as `user:token@`.
-    let rest = rest
-        .split_once('@')
-        .filter(|(user, _)| !user.contains('/'))
-        .map_or(rest, |(_, r)| r);
-    let Some((host, path)) = rest.split_once('/') else {
-        return Vec::new();
-    };
-    let path = path.trim_end_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    if path.is_empty() {
+    let aliases = ssh_aliases(ssh_config);
+    let host = address.real_host(&aliases);
+    if address.ssh && !address.host.eq_ignore_ascii_case(host) {
         return Vec::new();
     }
+    let mut hosts: Vec<&str> = aliases
+        .iter()
+        .filter(|(alias, host_name)| {
+            host_name.eq_ignore_ascii_case(host) && !alias.eq_ignore_ascii_case(host)
+        })
+        .map(|(alias, _)| alias.as_str())
+        .collect();
+    if !address.ssh {
+        hosts.push(host);
+    }
+    hosts.dedup();
+    hosts
+        .into_iter()
+        .map(|alias| format!("git@{alias}:{}.git", address.path))
+        .collect()
+}
 
+/// A folder name for a clone of `url`: its host and path, lower-cased, with
+/// everything but letters, digits, `.` and `-` turned into `_`. SSH aliases
+/// count as their real host, so a repository keeps one folder whether it's
+/// reached over HTTPS or SSH. For example `git@github.com:you/schema.git`
+/// becomes `github.com_you_schema`.
+pub fn clone_dir_name(url: &str) -> String {
+    clone_dir_name_with(url, &ssh_config())
+}
+
+fn clone_dir_name_with(url: &str, ssh_config: &str) -> String {
+    let source = match remote_address(url) {
+        Some(address) => {
+            let aliases = ssh_aliases(ssh_config);
+            let host = address.real_host(&aliases);
+            match address.port {
+                Some(port) => format!("{host}:{port}/{}", address.path),
+                None => format!("{host}/{}", address.path),
+            }
+        }
+        None => local_path(url).to_owned(),
+    };
+
+    let mut name = String::new();
+    for ch in source.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' {
+            name.push(ch);
+        } else if !name.ends_with('_') {
+            name.push('_');
+        }
+    }
+    let name = name.trim_matches('_');
+    if name.is_empty() {
+        "repository".to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// The host and path of a network repository URL.
+struct RemoteAddress<'a> {
+    host: &'a str,
+    port: Option<&'a str>,
+    /// Without slashes around it or a `.git` suffix, e.g. `you/schema`.
+    path: &'a str,
+    /// Whether Git reaches it over SSH, where the host may be an alias.
+    ssh: bool,
+}
+
+impl RemoteAddress<'_> {
+    /// The host an SSH alias stands for, or the host itself.
+    fn real_host<'a>(&'a self, aliases: &'a [(String, String)]) -> &'a str {
+        if !self.ssh {
+            return self.host;
+        }
+        aliases
+            .iter()
+            .find(|(alias, _)| alias.eq_ignore_ascii_case(self.host))
+            .map_or(self.host, |(_, host_name)| host_name.as_str())
+    }
+}
+
+/// Parses `scheme://[user@]host[:port]/path` and scp-like `[user@]host:path`
+/// URLs; anything else, such as a local path, is `None`.
+fn remote_address(url: &str) -> Option<RemoteAddress<'_>> {
+    let (ssh, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (scheme.contains("ssh"), rest),
+        // Git reads `host:path` as SSH when the colon comes before any slash.
+        None => match (url.find(':'), url.find('/')) {
+            (Some(colon), slash) if slash.is_none_or(|slash| colon < slash) => (true, url),
+            _ => return None,
+        },
+    };
+    // Drop user info such as `git@` or `user:token@`.
+    let rest = match rest.split_once('@') {
+        Some((user, after)) if !user.contains('/') => after,
+        _ => rest,
+    };
+    let (authority, path) = if url.contains("://") {
+        rest.split_once('/')?
+    } else {
+        rest.split_once(':')?
+    };
+    let (host, port) = match authority.split_once(':') {
+        Some((host, port)) if url.contains("://") => (host, Some(port)),
+        _ => (authority, None),
+    };
+    let path = path.trim_matches('/');
+    let path = path
+        .strip_suffix(".git")
+        .unwrap_or(path)
+        .trim_end_matches('/');
+    (!host.is_empty() && !path.is_empty()).then_some(RemoteAddress {
+        host,
+        port,
+        path,
+        ssh,
+    })
+}
+
+fn local_path(url: &str) -> &str {
+    let path = url.trim_end_matches('/');
+    path.strip_suffix(".git").unwrap_or(path)
+}
+
+fn ssh_config() -> String {
+    std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".ssh").join("config"))
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default()
+}
+
+/// The `Host` aliases in an SSH config that set a `HostName`, with that name.
+fn ssh_aliases(ssh_config: &str) -> Vec<(String, String)> {
     let mut aliases = Vec::new();
     let mut current: Vec<&str> = Vec::new();
     for line in ssh_config.lines() {
@@ -219,54 +366,14 @@ fn ssh_alternatives_with(url: &str, ssh_config: &str) -> Vec<String> {
                 .collect();
         } else if key.eq_ignore_ascii_case("Match") {
             current.clear();
-        } else if key.eq_ignore_ascii_case("HostName") && value.eq_ignore_ascii_case(host) {
-            aliases.extend(
-                current
-                    .iter()
-                    .filter(|alias| !alias.eq_ignore_ascii_case(host))
-                    .map(|a| a.to_string()),
-            );
+        } else if key.eq_ignore_ascii_case("HostName") {
+            // As in ssh, the first HostName for an alias wins.
+            for alias in current.drain(..) {
+                aliases.push((alias.to_owned(), value.to_owned()));
+            }
         }
     }
-    aliases.push(host.to_owned());
-    aliases.dedup();
     aliases
-        .into_iter()
-        .map(|alias| format!("git@{alias}:{path}.git"))
-        .collect()
-}
-
-/// A folder name for a clone of `url`: its host and path, lower-cased, with
-/// everything but letters, digits, `.` and `-` turned into `_`. For example
-/// `git@github.com:you/schema.git` becomes `github.com_you_schema`.
-pub fn clone_dir_name(url: &str) -> String {
-    let mut rest = url;
-    if let Some((_, after)) = rest.split_once("://") {
-        rest = after;
-    }
-    // Drop user info such as `git@` or `user:token@`.
-    if let Some((before, after)) = rest.split_once('@')
-        && !before.contains('/')
-    {
-        rest = after;
-    }
-    let rest = rest.trim_end_matches('/');
-    let rest = rest.strip_suffix(".git").unwrap_or(rest);
-
-    let mut name = String::new();
-    for ch in rest.chars().flat_map(char::to_lowercase) {
-        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' {
-            name.push(ch);
-        } else if !name.ends_with('_') {
-            name.push('_');
-        }
-    }
-    let name = name.trim_matches('_');
-    if name.is_empty() {
-        "repository".to_owned()
-    } else {
-        name.to_owned()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -503,9 +610,7 @@ fn stdout(output: &Output) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn suggests_ssh_aliases_for_https_urls() {
-        let config = "Host work
+    const SSH_CONFIG: &str = "Host work
     HostName example.org
 Host github-personal gh-alt
     HostName github.com
@@ -513,10 +618,13 @@ Host github-personal gh-alt
 Host *
     ServerAliveInterval 30
 ";
+
+    #[test]
+    fn suggests_ssh_aliases() {
         assert_eq!(
             ssh_alternatives_with(
                 "https://github.com/whalebanana86/ai-dolmen-test.git",
-                config
+                SSH_CONFIG
             ),
             [
                 "git@github-personal:whalebanana86/ai-dolmen-test.git",
@@ -528,29 +636,62 @@ Host *
             ssh_alternatives_with("https://user:token@github.com/a/b/", ""),
             ["git@github.com:a/b.git"]
         );
-        assert!(ssh_alternatives_with("git@github.com:a/b.git", config).is_empty());
-        assert!(ssh_alternatives_with("https://github.com/", config).is_empty());
+        // SSH to the plain host uses the default key, which may be another account's.
+        assert_eq!(
+            ssh_alternatives_with("git@github.com:a/b.git", SSH_CONFIG),
+            ["git@github-personal:a/b.git", "git@gh-alt:a/b.git"]
+        );
+        assert!(ssh_alternatives_with("git@github.com:a/b.git", "").is_empty());
+        assert!(ssh_alternatives_with("git@github-personal:a/b.git", SSH_CONFIG).is_empty());
+        assert!(ssh_alternatives_with("https://github.com/", SSH_CONFIG).is_empty());
+        assert!(ssh_alternatives_with("/srv/git/a.git", SSH_CONFIG).is_empty());
     }
 
     #[test]
     fn names_clone_folders_after_host_and_path() {
+        let name = |url| clone_dir_name_with(url, SSH_CONFIG);
         assert_eq!(
-            clone_dir_name("git@github.com:you/schema.git"),
+            name("git@github.com:you/schema.git"),
             "github.com_you_schema"
         );
         assert_eq!(
-            clone_dir_name("git@github-personal:whalebanana86/ai-dolmen-test.git"),
-            "github-personal_whalebanana86_ai-dolmen-test"
+            name("git@github-personal:whalebanana86/ai-dolmen-test.git"),
+            "github.com_whalebanana86_ai-dolmen-test"
         );
         assert_eq!(
-            clone_dir_name("https://user:token@github.com/You/Schema/"),
+            name("https://user:token@github.com/You/Schema/"),
             "github.com_you_schema"
         );
-        assert_eq!(
-            clone_dir_name("ssh://git@host:2222/a/b.git"),
-            "host_2222_a_b"
-        );
-        assert_eq!(clone_dir_name("/srv/git/schema.git"), "srv_git_schema");
-        assert_eq!(clone_dir_name("@@@"), "repository");
+        assert_eq!(name("ssh://git@host:2222/a/b.git"), "host_2222_a_b");
+        assert_eq!(name("ssh://git@gh-alt/a/b.git"), "github.com_a_b");
+        assert_eq!(name("/srv/git/schema.git"), "srv_git_schema");
+        assert_eq!(name("@@@"), "repository");
+    }
+
+    #[test]
+    fn knows_https_and_ssh_addresses_of_one_repository() {
+        let same = |a, b| same_repository_with(a, b, SSH_CONFIG);
+        let https = "https://github.com/whalebanana86/ai-dolmen-test.git";
+        assert!(same(
+            https,
+            "git@github.com:whalebanana86/ai-dolmen-test.git"
+        ));
+        assert!(same(
+            https,
+            "git@github-personal:whalebanana86/ai-dolmen-test.git"
+        ));
+        assert!(same(https, "ssh://git@gh-alt/whalebanana86/ai-dolmen-test"));
+        assert!(same(
+            https,
+            "https://github.com/whalebanana86/ai-dolmen-test/"
+        ));
+        assert!(!same(https, "git@github.com:whalebanana86/other.git"));
+        assert!(!same(https, "git@work:whalebanana86/ai-dolmen-test.git"));
+        assert!(!same(
+            "git@github.com:a_b/c.git",
+            "git@github.com:a/b_c.git"
+        ));
+        assert!(same("/srv/git/a.git", "/srv/git/a"));
+        assert!(!same("/srv/git/a.git", https));
     }
 }

@@ -127,6 +127,8 @@ export const ko: Messages = {
     snapshotFiles: "스냅샷 파일",
     httpsHint:
       "HTTPS로 푸시하면 키체인에 저장된 GitHub 계정을 씁니다. 이 Mac에 계정이 여러 개라면, SSH 주소를 쓰면 키에 맞는 계정으로 푸시합니다:",
+    sshHint:
+      "이 주소는 기본 SSH 키로 접속하는데, 그 키가 다른 GitHub 계정의 것일 수 있습니다. ~/.ssh/config의 별칭 주소를 쓰면 별칭에 지정한 키의 계정으로 접속합니다:",
     useAddress: (url) => `${url} 사용`,
 
     location: {
