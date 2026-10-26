@@ -1,7 +1,7 @@
 //! The JSON shapes the desktop app relies on (see `app/src/api.ts`).
 
 use dolmen_core::Error;
-use dolmen_core::postgres::{ConnectConfig, SslMode, StatementResult};
+use dolmen_core::postgres::{ConnectConfig, SchemaOutline, SslMode, StatementResult, TableOutline};
 use serde_json::json;
 
 #[test]
@@ -48,6 +48,25 @@ fn statement_results_are_tagged_by_kind() {
     assert_eq!(
         serde_json::to_value(StatementResult::Command { rows_affected: 3 }).unwrap(),
         json!({ "kind": "command", "rowsAffected": 3 })
+    );
+}
+
+#[test]
+fn schema_outline_uses_camel_case() {
+    let outline = SchemaOutline {
+        default_schema: "public".into(),
+        tables: vec![TableOutline {
+            schema: "public".into(),
+            name: "users".into(),
+            columns: vec!["id".into(), "email".into()],
+        }],
+    };
+    assert_eq!(
+        serde_json::to_value(outline).unwrap(),
+        json!({
+            "defaultSchema": "public",
+            "tables": [{ "schema": "public", "name": "users", "columns": ["id", "email"] }],
+        })
     );
 }
 

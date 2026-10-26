@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dolmen_core::Error;
-use dolmen_core::postgres::{ConnectConfig, Session, StatementResult};
+use dolmen_core::postgres::{ConnectConfig, SchemaOutline, Session, StatementResult};
 use serde::Serialize;
 use tauri::State;
 
@@ -59,6 +59,14 @@ pub async fn pg_execute(
     sessions: State<'_, Sessions>,
 ) -> Result<Vec<StatementResult>, Error> {
     sessions.get(session_id)?.execute(&sql, MAX_ROWS).await
+}
+
+#[tauri::command]
+pub async fn pg_schema_outline(
+    session_id: u64,
+    sessions: State<'_, Sessions>,
+) -> Result<SchemaOutline, Error> {
+    sessions.get(session_id)?.schema_outline().await
 }
 
 #[tauri::command]

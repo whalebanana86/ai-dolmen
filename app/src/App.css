@@ -9,6 +9,14 @@
   --danger: #c92a2a;
   --danger-bg: #fff0f0;
   --null: #9a9aa3;
+  --active-line: #f3f4f8;
+  --selection: #d0dafc;
+  --selection-match: #e4e9fd;
+  --syntax-keyword: #8b3fb8;
+  --syntax-type: #1c6ea4;
+  --syntax-string: #2f7d32;
+  --syntax-number: #b4570b;
+  --syntax-comment: #8a8a94;
   --mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -30,6 +38,14 @@
     --danger: #ff8787;
     --danger-bg: #3a2224;
     --null: #6b6b75;
+    --active-line: #2a2a2f;
+    --selection: #34406b;
+    --selection-match: #2f3550;
+    --syntax-keyword: #c792ea;
+    --syntax-type: #82aaff;
+    --syntax-string: #a5d6a7;
+    --syntax-number: #f7a072;
+    --syntax-comment: #7a7a85;
   }
 }
 
@@ -169,17 +185,12 @@ button:disabled {
 }
 
 .editor {
+  flex-shrink: 0;
   height: 35vh;
   min-height: 80px;
-  padding: 12px;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  outline: none;
+  overflow: hidden;
   resize: vertical;
-  background: var(--surface);
-  font-family: var(--mono);
-  font-size: 13px;
-  tab-size: 2;
+  border-bottom: 1px solid var(--border);
 }
 
 .results {

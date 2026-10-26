@@ -29,6 +29,18 @@ export type StatementResult =
     }
   | { kind: "command"; rowsAffected: number };
 
+export interface TableOutline {
+  schema: string;
+  name: string;
+  columns: string[];
+}
+
+export interface SchemaOutline {
+  /** The schema unqualified names resolve to first, usually "public". */
+  defaultSchema: string;
+  tables: TableOutline[];
+}
+
 export type DbError =
   | {
       kind: "database";
@@ -50,6 +62,7 @@ export const pg = {
   connect: (config: ConnectConfig) => invoke<SessionInfo>("pg_connect", { config }),
   execute: (sessionId: number, sql: string) =>
     invoke<StatementResult[]>("pg_execute", { sessionId, sql }),
+  schemaOutline: (sessionId: number) => invoke<SchemaOutline>("pg_schema_outline", { sessionId }),
   cancel: (sessionId: number) => invoke<void>("pg_cancel", { sessionId }),
   disconnect: (sessionId: number) => invoke<void>("pg_disconnect", { sessionId }),
 };

@@ -1,0 +1,122 @@
+import { useEffect, useRef, useState } from "react";
+import { basicSetup } from "codemirror";
+import { EditorView, keymap } from "@codemirror/view";
+import { Compartment, EditorState, Prec } from "@codemirror/state";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { PostgreSQL, SQLNamespace, sql } from "@codemirror/lang-sql";
+import { tags } from "@lezer/highlight";
+import { SchemaOutline } from "./api";
+
+interface Props {
+  initialValue: string;
+  /** Tables and columns to complete; null until loaded. */
+  outline: SchemaOutline | null;
+  onRun: () => void;
+  onChange: (value: string) => void;
+  /** Set to the editor view, so the parent can read text and selection when running. */
+  viewRef: { current: EditorView | null };
+}
+
+export function SqlEditor({ initialValue, outline, onRun, onChange, viewRef }: Props) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const [language] = useState(() => new Compartment());
+  // The view is created once, so it reads the latest callbacks through a ref.
+  const handlers = useRef({ onRun, onChange });
+  useEffect(() => {
+    handlers.current = { onRun, onChange };
+  });
+
+  useEffect(() => {
+    const view = new EditorView({
+      parent: parentRef.current!,
+      state: EditorState.create({
+        doc: initialValue,
+        extensions: [
+          Prec.highest(
+            keymap.of([
+              {
+                key: "Mod-Enter",
+                run: () => {
+                  handlers.current.onRun();
+                  return true;
+                },
+              },
+            ]),
+          ),
+          basicSetup,
+          language.of(sqlLanguage(null)),
+          syntaxHighlighting(highlightStyle),
+          theme,
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) handlers.current.onChange(update.state.doc.toString());
+          }),
+        ],
+      }),
+    });
+    viewRef.current = view;
+    view.focus();
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+    // The view owns the document after creation; later initialValue changes are ignored.
+  }, []);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: language.reconfigure(sqlLanguage(outline)) });
+  }, [outline, language, viewRef]);
+
+  return <div ref={parentRef} className="editor" />;
+}
+
+function sqlLanguage(outline: SchemaOutline | null) {
+  return sql({
+    dialect: PostgreSQL,
+    upperCaseKeywords: true,
+    schema: outline ? namespace(outline) : undefined,
+    defaultSchema: outline?.defaultSchema,
+  });
+}
+
+/** `{ schema: { table: [columns] } }`, so both `table` and `schema.table` complete. */
+function namespace(outline: SchemaOutline): SQLNamespace {
+  const schemas: Record<string, Record<string, string[]>> = {};
+  for (const table of outline.tables) {
+    (schemas[table.schema] ??= {})[table.name] = table.columns;
+  }
+  return schemas;
+}
+
+// Colors come from CSS variables in App.css, so light and dark mode follow the app.
+const theme = EditorView.theme({
+  "&": { height: "100%", backgroundColor: "var(--surface)", color: "var(--text)" },
+  "&.cm-focused": { outline: "none" },
+  ".cm-scroller": { fontFamily: "var(--mono)", fontSize: "13px", lineHeight: "1.6" },
+  ".cm-content": { caretColor: "var(--text)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
+  ".cm-gutters": { backgroundColor: "var(--surface)", color: "var(--muted)", border: "none" },
+  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--active-line)" },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+    { backgroundColor: "var(--selection)" },
+  ".cm-selectionMatch": { backgroundColor: "var(--selection-match)" },
+  "&.cm-focused .cm-matchingBracket": { backgroundColor: "var(--selection-match)", outline: "none" },
+  ".cm-tooltip": {
+    border: "1px solid var(--border)",
+    borderRadius: "6px",
+    backgroundColor: "var(--surface)",
+    color: "var(--text)",
+  },
+  ".cm-tooltip-autocomplete > ul": { fontFamily: "var(--mono)", fontSize: "12px" },
+  ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    backgroundColor: "var(--accent)",
+    color: "var(--accent-text)",
+  },
+});
+
+const highlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: "var(--syntax-keyword)" },
+  { tag: [tags.typeName, tags.standard(tags.name)], color: "var(--syntax-type)" },
+  { tag: [tags.string, tags.special(tags.string)], color: "var(--syntax-string)" },
+  { tag: [tags.number, tags.bool, tags.null], color: "var(--syntax-number)" },
+  { tag: [tags.lineComment, tags.blockComment], color: "var(--syntax-comment)", fontStyle: "italic" },
+]);

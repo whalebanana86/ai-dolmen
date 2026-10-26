@@ -207,6 +207,33 @@ async fn rejects_a_wrong_password() {
     );
 }
 
+#[tokio::test]
+async fn outlines_tables_and_columns_for_completion() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    execute(
+        &session,
+        "CREATE SCHEMA IF NOT EXISTS outline_test; \
+         DROP TABLE IF EXISTS outline_test.people; \
+         CREATE TABLE outline_test.people (id int, name text, born date); \
+         ALTER TABLE outline_test.people DROP COLUMN born",
+    )
+    .await;
+
+    let outline = session.schema_outline().await.expect("outline");
+    assert_eq!(outline.default_schema, "public");
+    let people = outline
+        .tables
+        .iter()
+        .find(|t| t.schema == "outline_test" && t.name == "people")
+        .expect("outline_test.people listed");
+    // Dropped columns are hidden and the rest keep their order.
+    assert_eq!(people.columns, ["id", "name"]);
+    assert!(outline.tables.iter().all(|t| t.schema != "pg_catalog"));
+
+    execute(&session, "DROP SCHEMA outline_test CASCADE").await;
+}
+
 // Needs no server: nothing listens on port 1.
 #[tokio::test]
 async fn explains_why_a_connection_failed() {

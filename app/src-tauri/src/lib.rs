@@ -15,6 +15,7 @@ pub fn run() {
             app_version,
             pg::pg_connect,
             pg::pg_execute,
+            pg::pg_schema_outline,
             pg::pg_cancel,
             pg::pg_disconnect,
             sql::sql_statement_at,

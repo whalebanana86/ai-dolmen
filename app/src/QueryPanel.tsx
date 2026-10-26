@@ -1,5 +1,7 @@
-import { KeyboardEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { EditorView } from "@codemirror/view";
 import {
+  SchemaOutline,
   SessionInfo,
   StatementResult,
   TextRange,
@@ -9,6 +11,9 @@ import {
   sqlText,
 } from "./api";
 import { ResultView } from "./ResultView";
+import { SqlEditor } from "./SqlEditor";
+
+const INITIAL_SQL = "SELECT version();\n";
 
 interface Location {
   line: number;
@@ -31,15 +36,25 @@ interface Props {
 }
 
 export function QueryPanel({ session, onDisconnect }: Props) {
-  const editorRef = useRef<HTMLTextAreaElement>(null);
-  const [sql, setSql] = useState("SELECT version();");
+  const viewRef = useRef<EditorView | null>(null);
+  const [hasText, setHasText] = useState(INITIAL_SQL.trim() !== "");
+  const [outline, setOutline] = useState<SchemaOutline | null>(null);
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
+  const refreshOutline = useCallback(() => {
+    pg.schemaOutline(session.id)
+      .then(setOutline)
+      .catch((error) => console.error("loading tables for completion failed", error));
+  }, [session.id]);
+  useEffect(refreshOutline, [refreshOutline]);
+
   async function run() {
-    const editor = editorRef.current;
-    if (running || !editor) return;
-    const ranges = await statementsToRun(sql, editor.selectionStart, editor.selectionEnd);
+    const view = viewRef.current;
+    if (running || !view) return;
+    const sql = view.state.doc.toString();
+    const { from, to } = view.state.selection.main;
+    const ranges = await statementsToRun(sql, from, to);
     if (ranges.length === 0) return;
 
     setRunning(true);
@@ -64,6 +79,8 @@ export function QueryPanel({ session, onDisconnect }: Props) {
       elapsedMs: performance.now() - started,
     });
     setRunning(false);
+    // DDL such as CREATE TABLE returns no rows; reload what completion knows about.
+    if (results.some((result) => result.kind === "command")) refreshOutline();
   }
 
   function cancel() {
@@ -74,13 +91,6 @@ export function QueryPanel({ session, onDisconnect }: Props) {
   async function disconnect() {
     await pg.disconnect(session.id);
     onDisconnect();
-  }
-
-  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      run();
-    }
   }
 
   return (
@@ -95,7 +105,7 @@ export function QueryPanel({ session, onDisconnect }: Props) {
           <button
             className="primary"
             onClick={run}
-            disabled={!sql.trim()}
+            disabled={!hasText}
             title="Runs the statement at the cursor, or the selection (⌘/Ctrl + Enter)"
           >
             Run
@@ -104,14 +114,12 @@ export function QueryPanel({ session, onDisconnect }: Props) {
         <button onClick={disconnect}>Disconnect</button>
       </div>
 
-      <textarea
-        ref={editorRef}
-        className="editor"
-        value={sql}
-        onChange={(e) => setSql(e.target.value)}
-        onKeyDown={onKeyDown}
-        spellCheck={false}
-        autoFocus
+      <SqlEditor
+        initialValue={INITIAL_SQL}
+        outline={outline}
+        onRun={run}
+        onChange={(value) => setHasText(value.trim() !== "")}
+        viewRef={viewRef}
       />
 
       <section className="results">
