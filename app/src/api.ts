@@ -54,6 +54,20 @@ export const pg = {
   disconnect: (sessionId: number) => invoke<void>("pg_disconnect", { sessionId }),
 };
 
+/** A range in editor text, in UTF-16 code units like JavaScript string indices. */
+export interface TextRange {
+  start: number;
+  end: number;
+}
+
+export const sqlText = {
+  /** The statement to run for a cursor at `cursor`, like DataGrip picks it. */
+  statementAt: (sql: string, cursor: number) =>
+    invoke<TextRange | null>("sql_statement_at", { sql, cursor }),
+  /** Every statement in `sql`, ignoring semicolons in strings, comments and `$$` bodies. */
+  split: (sql: string) => invoke<TextRange[]>("sql_split", { sql }),
+};
+
 export function isDbError(error: unknown): error is DbError {
   return typeof error === "object" && error !== null && "kind" in error;
 }

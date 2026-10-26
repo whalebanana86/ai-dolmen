@@ -1,10 +1,29 @@
-import { KeyboardEvent, useState } from "react";
-import { SessionInfo, StatementResult, errorMessage, isDbError, pg } from "./api";
+import { KeyboardEvent, useRef, useState } from "react";
+import {
+  SessionInfo,
+  StatementResult,
+  TextRange,
+  errorMessage,
+  isDbError,
+  pg,
+  sqlText,
+} from "./api";
 import { ResultView } from "./ResultView";
 
-type Outcome =
-  | { kind: "results"; results: StatementResult[]; elapsedMs: number }
-  | { kind: "error"; error: unknown; sql: string };
+interface Location {
+  line: number;
+  column: number;
+}
+
+interface Outcome {
+  /** Results of the statements that succeeded, in order. */
+  results: StatementResult[];
+  /** The error that stopped the run, if any. */
+  failure: { error: unknown; location: Location | null } | null;
+  statementCount: number;
+  firstLine: number;
+  elapsedMs: number;
+}
 
 interface Props {
   session: SessionInfo;
@@ -12,26 +31,43 @@ interface Props {
 }
 
 export function QueryPanel({ session, onDisconnect }: Props) {
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const [sql, setSql] = useState("SELECT version();");
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
   async function run() {
-    if (running || !sql.trim()) return;
+    const editor = editorRef.current;
+    if (running || !editor) return;
+    const ranges = await statementsToRun(sql, editor.selectionStart, editor.selectionEnd);
+    if (ranges.length === 0) return;
+
     setRunning(true);
     const started = performance.now();
-    try {
-      const results = await pg.execute(session.id, sql);
-      setOutcome({ kind: "results", results, elapsedMs: performance.now() - started });
-    } catch (error) {
-      setOutcome({ kind: "error", error, sql });
-    } finally {
-      setRunning(false);
+    const results: StatementResult[] = [];
+    let failure: Outcome["failure"] = null;
+    // One statement at a time, so a failure doesn't roll back the ones before it.
+    for (const range of ranges) {
+      const statement = sql.slice(range.start, range.end);
+      try {
+        results.push(...(await pg.execute(session.id, statement)));
+      } catch (error) {
+        failure = { error, location: errorLocation(sql, range.start, statement, error) };
+        break;
+      }
     }
+    setOutcome({
+      results,
+      failure,
+      statementCount: ranges.length,
+      firstLine: lineAt(sql, ranges[0].start),
+      elapsedMs: performance.now() - started,
+    });
+    setRunning(false);
   }
 
   function cancel() {
-    // The running execute rejects with query_canceled, which shows as its outcome.
+    // The running statement fails with query_canceled, which stops the run.
     pg.cancel(session.id).catch((error) => console.error("cancel failed", error));
   }
 
@@ -56,7 +92,12 @@ export function QueryPanel({ session, onDisconnect }: Props) {
         {running ? (
           <button onClick={cancel}>Cancel</button>
         ) : (
-          <button className="primary" onClick={run} disabled={!sql.trim()} title="⌘/Ctrl + Enter">
+          <button
+            className="primary"
+            onClick={run}
+            disabled={!sql.trim()}
+            title="Runs the statement at the cursor, or the selection (⌘/Ctrl + Enter)"
+          >
             Run
           </button>
         )}
@@ -64,6 +105,7 @@ export function QueryPanel({ session, onDisconnect }: Props) {
       </div>
 
       <textarea
+        ref={editorRef}
         className="editor"
         value={sql}
         onChange={(e) => setSql(e.target.value)}
@@ -74,16 +116,17 @@ export function QueryPanel({ session, onDisconnect }: Props) {
 
       <section className="results">
         {running && <p className="muted status">Running…</p>}
-        {!running && outcome?.kind === "error" && <ErrorView error={outcome.error} sql={outcome.sql} />}
-        {!running && outcome?.kind === "results" && (
+        {!running && outcome && (
           <>
             <p className="muted status">
-              {outcome.results.length} {outcome.results.length === 1 ? "statement" : "statements"} ·{" "}
+              Line {outcome.firstLine} · {outcome.results.length} of {outcome.statementCount}{" "}
+              {outcome.statementCount === 1 ? "statement" : "statements"} ·{" "}
               {Math.round(outcome.elapsedMs)} ms
             </p>
             {outcome.results.map((result, index) => (
               <ResultView key={index} index={index} result={result} />
             ))}
+            {outcome.failure && <ErrorView {...outcome.failure} />}
           </>
         )}
       </section>
@@ -91,9 +134,20 @@ export function QueryPanel({ session, onDisconnect }: Props) {
   );
 }
 
-function ErrorView({ error, sql }: { error: unknown; sql: string }) {
+/** The selected statements, or the statement at the cursor when nothing is selected. */
+async function statementsToRun(sql: string, selectionStart: number, selectionEnd: number) {
+  if (selectionStart === selectionEnd) {
+    const range = await sqlText.statementAt(sql, selectionStart);
+    return range ? [range] : [];
+  }
+  const ranges = await sqlText.split(sql.slice(selectionStart, selectionEnd));
+  return ranges.map(
+    (range): TextRange => ({ start: range.start + selectionStart, end: range.end + selectionStart }),
+  );
+}
+
+function ErrorView({ error, location }: { error: unknown; location: Location | null }) {
   const db = isDbError(error) && error.kind === "database" ? error : null;
-  const location = db?.position ? lineAndColumn(sql, db.position) : null;
 
   return (
     <div className="error-box">
@@ -112,8 +166,22 @@ function ErrorView({ error, sql }: { error: unknown; sql: string }) {
   );
 }
 
-/** PostgreSQL counts positions in characters, so split by code point rather than UTF-16 unit. */
-function lineAndColumn(sql: string, position: number) {
-  const lines = [...sql].slice(0, position - 1).join("").split("\n");
+function lineAt(text: string, index: number) {
+  return text.slice(0, index).split("\n").length;
+}
+
+/**
+ * Maps the error position PostgreSQL reports within `statement` to a line and
+ * column in the editor. PostgreSQL counts characters, so split by code point.
+ */
+function errorLocation(
+  sql: string,
+  statementStart: number,
+  statement: string,
+  error: unknown,
+): Location | null {
+  if (!isDbError(error) || error.kind !== "database" || !error.position) return null;
+  const before = sql.slice(0, statementStart) + [...statement].slice(0, error.position - 1).join("");
+  const lines = before.split("\n");
   return { line: lines.length, column: [...lines[lines.length - 1]].length + 1 };
 }

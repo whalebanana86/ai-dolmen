@@ -4,6 +4,7 @@
 
 mod error;
 pub mod postgres;
+pub mod sql;
 
 pub use error::Error;
 
