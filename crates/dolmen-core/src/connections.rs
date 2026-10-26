@@ -34,6 +34,9 @@ pub struct SavedConnection {
     /// Whether a password is kept in the credential store.
     #[serde(default)]
     pub has_password: bool,
+    /// Where this database's schema snapshot is written, usually inside a Git repository.
+    #[serde(default)]
+    pub snapshot_dir: Option<String>,
 }
 
 /// What to do with the stored password when saving a connection.

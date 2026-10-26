@@ -15,6 +15,7 @@ use tokio_postgres::{Client, SimpleQueryMessage};
 use crate::Error;
 use crate::schema::Database;
 
+pub mod ddl;
 mod introspect;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -85,32 +86,17 @@ pub struct Session {
     client: Client,
     tls: MakeTlsConnector,
     server_version: String,
+    config: ConnectConfig,
+    /// A second connection for reading the catalogs, opened on first use. Its
+    /// `search_path` is only `pg_catalog`, as with pg_dump, so definitions name
+    /// every schema whatever the user's session has set, and introspection never
+    /// touches the user's transaction.
+    metadata: tokio::sync::Mutex<Option<Client>>,
 }
 
 impl Session {
     pub async fn connect(config: &ConnectConfig) -> Result<Self, Error> {
-        let mut pg = tokio_postgres::Config::new();
-        pg.host(&config.host)
-            .port(config.port)
-            .user(&config.user)
-            .dbname(&config.database)
-            .application_name("Dolmen")
-            .connect_timeout(CONNECT_TIMEOUT)
-            .ssl_mode(match config.ssl_mode {
-                SslMode::Disable => tokio_postgres::config::SslMode::Disable,
-                SslMode::Prefer => tokio_postgres::config::SslMode::Prefer,
-                SslMode::Require | SslMode::VerifyFull => tokio_postgres::config::SslMode::Require,
-            });
-        if let Some(password) = &config.password {
-            pg.password(password);
-        }
-
-        let tls = tls_connector(config.ssl_mode)?;
-        let (client, connection) = pg.connect(tls.clone()).await?;
-        // The connection drives the socket. When it fails, the next call on the
-        // client returns the error, so there is nothing to handle here.
-        tokio::spawn(connection);
-
+        let (client, tls) = open(config, None).await?;
         let server_version = client
             .simple_query("SHOW server_version")
             .await?
@@ -125,6 +111,8 @@ impl Session {
             client,
             tls,
             server_version,
+            config: config.clone(),
+            metadata: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -183,7 +171,15 @@ impl Session {
 
     /// Reads the structure of the database: schemas, tables, views, functions and types.
     pub async fn introspect(&self) -> Result<Database, Error> {
-        introspect::introspect(&self.client).await
+        let mut metadata = self.metadata.lock().await;
+        if metadata.as_ref().is_none_or(Client::is_closed) {
+            *metadata = Some(
+                open(&self.config, Some("-c search_path=pg_catalog"))
+                    .await?
+                    .0,
+            );
+        }
+        introspect::introspect(metadata.as_ref().expect("opened above")).await
     }
 
     /// The schema unqualified names resolve to first, usually `public`.
@@ -203,6 +199,38 @@ impl Session {
             .await?;
         Ok(())
     }
+}
+
+/// Opens a connection, with extra server `options` such as `-c name=value`.
+async fn open(
+    config: &ConnectConfig,
+    options: Option<&str>,
+) -> Result<(Client, MakeTlsConnector), Error> {
+    let mut pg = tokio_postgres::Config::new();
+    pg.host(&config.host)
+        .port(config.port)
+        .user(&config.user)
+        .dbname(&config.database)
+        .application_name("Dolmen")
+        .connect_timeout(CONNECT_TIMEOUT)
+        .ssl_mode(match config.ssl_mode {
+            SslMode::Disable => tokio_postgres::config::SslMode::Disable,
+            SslMode::Prefer => tokio_postgres::config::SslMode::Prefer,
+            SslMode::Require | SslMode::VerifyFull => tokio_postgres::config::SslMode::Require,
+        });
+    if let Some(password) = &config.password {
+        pg.password(password);
+    }
+    if let Some(options) = options {
+        pg.options(options);
+    }
+
+    let tls = tls_connector(config.ssl_mode)?;
+    let (client, connection) = pg.connect(tls.clone()).await?;
+    // The connection drives the socket. When it fails, the next call on the
+    // client returns the error, so there is nothing to handle here.
+    tokio::spawn(connection);
+    Ok((client, tls))
 }
 
 struct RowsBuilder {

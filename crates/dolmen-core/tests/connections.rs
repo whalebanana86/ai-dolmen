@@ -44,6 +44,7 @@ fn local() -> SavedConnection {
         database: "postgres".into(),
         ssl_mode: SslMode::Prefer,
         has_password: false,
+        snapshot_dir: None,
     }
 }
 

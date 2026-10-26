@@ -2,16 +2,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import {
   Introspection,
+  SavedConnection,
+  SchemaObject,
   SessionInfo,
+  SnapshotStatus,
   StatementResult,
   TextRange,
+  connections,
   errorMessage,
   isAppError,
   pg,
+  snapshots,
   sqlText,
 } from "./api";
 import { ResultView } from "./ResultView";
 import { SchemaTree } from "./SchemaTree";
+import { SnapshotPanel } from "./SnapshotPanel";
 import { SqlEditor } from "./SqlEditor";
 
 const INITIAL_SQL = "SELECT version();\n";
@@ -35,10 +41,13 @@ interface Outcome {
 
 interface Props {
   session: SessionInfo;
+  /** The saved connection the session came from, if any. */
+  connection: SavedConnection | null;
+  onConnectionChange: (connection: SavedConnection) => void;
   onDisconnect: () => void;
 }
 
-export function QueryPanel({ session, onDisconnect }: Props) {
+export function QueryPanel({ session, connection, onConnectionChange, onDisconnect }: Props) {
   const viewRef = useRef<EditorView | null>(null);
   const [hasText, setHasText] = useState(INITIAL_SQL.trim() !== "");
   const [introspection, setIntrospection] = useState<Introspection | null>(null);
@@ -55,6 +64,39 @@ export function QueryPanel({ session, onDisconnect }: Props) {
       .finally(() => setLoadingSchema(false));
   }, [session.id]);
   useEffect(refreshSchema, [refreshSchema]);
+
+  // An unsaved connection can still snapshot; its folder is just not remembered.
+  const [snapshotDir, setSnapshotDir] = useState<string | null>(connection?.snapshotDir ?? null);
+  const [snapshotStatus, setSnapshotStatus] = useState<SnapshotStatus | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [checkingSnapshot, setCheckingSnapshot] = useState(false);
+  const [snapshotOpen, setSnapshotOpen] = useState(false);
+
+  const refreshSnapshot = useCallback(() => {
+    if (!snapshotDir) return;
+    setCheckingSnapshot(true);
+    snapshots
+      .status(session.id, snapshotDir)
+      .then((status) => {
+        setSnapshotStatus(status);
+        setSnapshotError(null);
+      })
+      .catch((error) => setSnapshotError(errorMessage(error)))
+      .finally(() => setCheckingSnapshot(false));
+  }, [session.id, snapshotDir]);
+  useEffect(refreshSnapshot, [refreshSnapshot]);
+
+  async function chooseSnapshotDir(dir: string) {
+    setSnapshotStatus(null);
+    setSnapshotDir(dir);
+    if (connection) {
+      try {
+        onConnectionChange(await connections.save({ ...connection, snapshotDir: dir }, { kind: "keep" }));
+      } catch (error) {
+        setSnapshotError(`The folder is in use but couldn't be saved with the connection: ${errorMessage(error)}`);
+      }
+    }
+  }
 
   async function run() {
     const view = viewRef.current;
@@ -87,8 +129,18 @@ export function QueryPanel({ session, onDisconnect }: Props) {
       elapsedMs: performance.now() - started,
     });
     setRunning(false);
-    // DDL such as CREATE TABLE returns no rows; reload the tree and completion.
-    if (results.some((result) => result.kind === "command")) refreshSchema();
+    // DDL such as CREATE TABLE returns no rows; reload the tree, completion and snapshot status.
+    if (results.some((result) => result.kind === "command")) {
+      refreshSchema();
+      refreshSnapshot();
+    }
+  }
+
+  function showDdl(schema: string, object: SchemaObject) {
+    snapshots
+      .createStatement(schema, object)
+      .then((ddl) => insertStatement(ddl.trimEnd(), false))
+      .catch((error) => console.error("generating DDL failed", error));
   }
 
   /** Adds a statement at the end of the editor, puts the cursor on it, and runs it if asked. */
@@ -135,6 +187,14 @@ export function QueryPanel({ session, onDisconnect }: Props) {
             Run
           </button>
         )}
+        <button onClick={() => setSnapshotOpen(true)} title="Compare the database with its schema snapshot">
+          Snapshot
+          {snapshotStatus && (
+            <span className={`badge ${snapshotStatus.changes.length > 0 ? "" : "ok"}`}>
+              {snapshotStatus.changes.length > 0 ? snapshotStatus.changes.length : "✓"}
+            </span>
+          )}
+        </button>
         <button onClick={disconnect}>Disconnect</button>
       </div>
 
@@ -142,7 +202,7 @@ export function QueryPanel({ session, onDisconnect }: Props) {
         <SchemaTree
           introspection={introspection}
           loading={loadingSchema}
-          actions={{ insert: insertStatement, refresh: refreshSchema }}
+          actions={{ insert: insertStatement, refresh: refreshSchema, showDdl }}
         />
         <div className="workspace-main">
           <SqlEditor
@@ -171,6 +231,19 @@ export function QueryPanel({ session, onDisconnect }: Props) {
           </section>
         </div>
       </div>
+      {snapshotOpen && (
+        <SnapshotPanel
+          sessionId={session.id}
+          database={session.database}
+          dir={snapshotDir}
+          onChooseDir={chooseSnapshotDir}
+          status={snapshotStatus}
+          statusError={snapshotError}
+          checking={checkingSnapshot}
+          onRefresh={refreshSnapshot}
+          onClose={() => setSnapshotOpen(false)}
+        />
+      )}
     </main>
   );
 }

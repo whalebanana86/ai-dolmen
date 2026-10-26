@@ -1,5 +1,15 @@
 import { MouseEvent, ReactNode, useCallback, useState } from "react";
-import { Column, Constraint, Index, Introspection, Schema, SqlFunction, Table, View } from "./api";
+import {
+  Column,
+  Constraint,
+  Index,
+  Introspection,
+  Schema,
+  SchemaObject,
+  SqlFunction,
+  Table,
+  View,
+} from "./api";
 import { ContextMenu, MenuItem } from "./ContextMenu";
 import { quoteIdent } from "./sqlIdent";
 
@@ -7,6 +17,8 @@ import { quoteIdent } from "./sqlIdent";
 export interface TreeActions {
   /** Adds SQL at the end of the editor, and runs it when `run` is set. */
   insert: (sql: string, run: boolean) => void;
+  /** Adds the object's CREATE statement to the editor. */
+  showDdl: (schema: string, object: SchemaObject) => void;
   refresh: () => void;
 }
 
@@ -194,6 +206,10 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
                     label: "Show current value",
                     onSelect: () => actions.insert(`SELECT last_value, is_called FROM ${name};`, true),
                   },
+                  {
+                    label: "Show DDL",
+                    onSelect: () => actions.showDdl(schema.name, { type: "sequence", ...sequence }),
+                  },
                   { separator: true },
                   copyItem("Copy name", sequence.name),
                   copyItem("Copy qualified name", sql.qualified(schema.name, sequence.name)),
@@ -215,6 +231,8 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
             detail={type.labels.join(", ")}
             onContextMenu={(e) =>
               openMenu(e, [
+                { label: "Show DDL", onSelect: () => actions.showDdl(schema.name, { type: "enum", ...type }) },
+                { separator: true },
                 copyItem("Copy name", type.name),
                 copyItem("Copy qualified name", sql.qualified(schema.name, type.name)),
                 { separator: true },
@@ -349,6 +367,14 @@ function relationMenu(schema: string, relation: Table | View, actions: TreeActio
           },
         ]
       : []),
+    {
+      label: "Show DDL",
+      onSelect: () =>
+        actions.showDdl(
+          schema,
+          "constraints" in relation ? { type: "table", ...relation } : { type: "view", ...relation },
+        ),
+    },
     { separator: true },
     copyItem("Copy name", relation.name),
     copyItem("Copy qualified name", sql.qualified(schema, relation.name)),
@@ -481,7 +507,8 @@ function columnTitle(column: Column) {
   return [
     `${column.name} ${column.dataType}${column.nullable ? "" : " NOT NULL"}`,
     column.identity && `GENERATED ${column.identity === "always" ? "ALWAYS" : "BY DEFAULT"} AS IDENTITY`,
-    column.generated && `GENERATED ALWAYS AS (${column.generated})`,
+    column.generated &&
+      `GENERATED ALWAYS AS (${column.generated.expression}) ${column.generated.stored ? "STORED" : "VIRTUAL"}`,
     column.default && `DEFAULT ${column.default}`,
     column.comment,
   ]

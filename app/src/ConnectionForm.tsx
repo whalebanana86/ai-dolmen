@@ -29,6 +29,7 @@ const NEW_CONNECTION: Draft = {
   database: "postgres",
   sslMode: "prefer",
   hasPassword: false,
+  snapshotDir: null,
 };
 
 function toDraft(connection: SavedConnection): Draft {
@@ -40,7 +41,8 @@ function defaultName(draft: Draft) {
 }
 
 interface Props {
-  onConnected: (session: SessionInfo) => void;
+  /** Gets the saved connection the session came from, or null for an unsaved one. */
+  onConnected: (session: SessionInfo, connection: SavedConnection | null) => void;
 }
 
 export function ConnectionForm({ onConnected }: Props) {
@@ -90,7 +92,7 @@ export function ConnectionForm({ onConnected }: Props) {
         },
         useSavedPassword ? target.id : null,
       );
-      onConnected(session);
+      onConnected(session, saved.find((connection) => connection.id === target.id) ?? null);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(null);

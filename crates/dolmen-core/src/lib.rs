@@ -4,8 +4,10 @@
 
 pub mod connections;
 mod error;
+pub mod git;
 pub mod postgres;
 pub mod schema;
+pub mod snapshot;
 pub mod sql;
 
 pub use error::Error;

@@ -119,6 +119,7 @@ fn saved_connections_use_camel_case() {
         database: "postgres".into(),
         ssl_mode: SslMode::VerifyFull,
         has_password: true,
+        snapshot_dir: Some("/repo/db/schema".into()),
     };
     let value = serde_json::to_value(&connection).unwrap();
     assert_eq!(
@@ -132,6 +133,7 @@ fn saved_connections_use_camel_case() {
             "database": "postgres",
             "sslMode": "verify-full",
             "hasPassword": true,
+            "snapshotDir": "/repo/db/schema",
         })
     );
     assert_eq!(

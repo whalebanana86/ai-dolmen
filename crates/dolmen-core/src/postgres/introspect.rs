@@ -11,7 +11,7 @@ use tokio_postgres::Client;
 use crate::Error;
 use crate::schema::{
     Column, Constraint, ConstraintKind, Database, EnumType, Extension, Function, FunctionKind,
-    Identity, Index, Schema, Sequence, Table, TableKind, View,
+    Generated, Identity, Index, Schema, Sequence, Table, TableKind, View,
 };
 
 /// Matches user schemas through the alias `n` for `pg_namespace`.
@@ -65,7 +65,8 @@ pub(super) async fn introspect(client: &Client) -> Result<Database, Error> {
             &format!(
                 "SELECT c.oid, n.nspname, c.relname, c.relkind::text,
                         CASE WHEN c.relkind IN ('v', 'm') THEN pg_catalog.pg_get_viewdef(c.oid, true) END,
-                        pg_catalog.obj_description(c.oid, 'pg_class')
+                        pg_catalog.obj_description(c.oid, 'pg_class'),
+                        CASE WHEN c.relkind = 'p' THEN pg_catalog.pg_get_partkeydef(c.oid) END
                  FROM pg_catalog.pg_class c
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                  WHERE c.relkind IN ('r', 'p', 'f', 'v', 'm') AND {USER_SCHEMAS} AND {}
@@ -97,6 +98,7 @@ pub(super) async fn introspect(client: &Client) -> Result<Database, Error> {
                     columns: Vec::new(),
                     constraints: Vec::new(),
                     indexes: Vec::new(),
+                    partition_key: row.get(6),
                     comment,
                 });
                 Relation::Table {
@@ -146,18 +148,28 @@ pub(super) async fn introspect(client: &Client) -> Result<Database, Error> {
         };
         // A generated column's expression is stored as its default.
         let expression: Option<String> = row.get(4);
-        let generated = !row.get::<_, &str>(6).is_empty();
+        let generated = match row.get::<_, &str>(6) {
+            "s" => Some(true),
+            "v" => Some(false),
+            _ => None,
+        };
         let column = Column {
             name: row.get(1),
             data_type: row.get(2),
             nullable: !row.get::<_, bool>(3),
-            default: if generated { None } else { expression.clone() },
+            default: if generated.is_some() {
+                None
+            } else {
+                expression.clone()
+            },
             identity: match row.get::<_, &str>(5) {
                 "a" => Some(Identity::Always),
                 "d" => Some(Identity::ByDefault),
                 _ => None,
             },
-            generated: if generated { expression } else { None },
+            generated: generated
+                .zip(expression)
+                .map(|(stored, expression)| Generated { expression, stored }),
             comment: row.get(7),
         };
         match *relation {

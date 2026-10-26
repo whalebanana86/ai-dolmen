@@ -16,6 +16,7 @@ export interface ConnectConfig {
 export interface SessionInfo {
   id: number;
   serverVersion: string;
+  database: string;
 }
 
 export type StatementResult =
@@ -38,8 +39,7 @@ export interface Column {
   nullable: boolean;
   default: string | null;
   identity: "always" | "byDefault" | null;
-  /** The expression of a generated column. */
-  generated: string | null;
+  generated: { expression: string; stored: boolean } | null;
   comment: string | null;
 }
 
@@ -65,6 +65,8 @@ export interface Table {
   constraints: Constraint[];
   /** Indexes that don't back a primary key, unique or exclusion constraint. */
   indexes: Index[];
+  /** The PARTITION BY clause of a partitioned table, e.g. "RANGE (created_at)". */
+  partitionKey: string | null;
   comment: string | null;
 }
 
@@ -98,6 +100,14 @@ export interface Database {
   schemas: Schema[];
   extensions: { name: string; schema: string }[];
 }
+
+/** Any schema object, tagged with its type, e.g. to ask for its DDL. */
+export type SchemaObject =
+  | ({ type: "table" } & Table)
+  | ({ type: "view" } & View)
+  | ({ type: "function" } & SqlFunction)
+  | ({ type: "sequence" } & Schema["sequences"][number])
+  | ({ type: "enum" } & Schema["enums"][number]);
 
 export interface Introspection {
   /** The schema unqualified names resolve to first, usually "public". */
@@ -145,6 +155,8 @@ export interface SavedConnection {
   database: string;
   sslMode: SslMode;
   hasPassword: boolean;
+  /** Where this database's schema snapshot is written, usually inside a Git repository. */
+  snapshotDir: string | null;
 }
 
 export type PasswordChange = { kind: "keep" } | { kind: "set"; password: string } | { kind: "forget" };
@@ -154,6 +166,34 @@ export const connections = {
   save: (connection: SavedConnection, password: PasswordChange) =>
     invoke<SavedConnection>("connections_save", { connection, password }),
   delete: (id: string) => invoke<void>("connections_delete", { id }),
+};
+
+export interface FileChange {
+  /** Path inside the snapshot folder, e.g. "public/tables/users.sql". */
+  path: string;
+  kind: "added" | "modified" | "removed";
+  /** The change as a unified diff. */
+  diff: string;
+}
+
+export interface SnapshotStatus {
+  /** The Git repository holding the folder, if any. */
+  repository: { root: string; branch: string | null } | null;
+  /** What writing the snapshot now would add, change or remove. */
+  changes: FileChange[];
+  /** Whether the folder already holds a snapshot. */
+  initialized: boolean;
+}
+
+export const snapshots = {
+  status: (sessionId: number, dir: string) =>
+    invoke<SnapshotStatus>("snapshot_status", { sessionId, dir }),
+  /** Writes the snapshot into `dir`, and commits it when a message is given. */
+  save: (sessionId: number, dir: string, commitMessage: string | null) =>
+    invoke<{ commit: string | null }>("snapshot_save", { sessionId, dir, commitMessage }),
+  /** The CREATE statement for one object, as written in snapshots. */
+  createStatement: (schema: string, object: SchemaObject) =>
+    invoke<string>("ddl_create_statement", { schema, object }),
 };
 
 /** A range in editor text, in UTF-16 code units like JavaScript string indices. */

@@ -23,7 +23,7 @@ pub struct Sessions {
 }
 
 impl Sessions {
-    fn get(&self, id: u64) -> Result<Arc<Session>, Error> {
+    pub(crate) fn get(&self, id: u64) -> Result<Arc<Session>, Error> {
         self.open
             .lock()
             .unwrap()
@@ -38,6 +38,7 @@ impl Sessions {
 pub struct SessionInfo {
     id: u64,
     server_version: String,
+    database: String,
 }
 
 /// Connects with `config`. Without a password in `config`, the stored password of
@@ -57,6 +58,7 @@ pub async fn pg_connect(
     let info = SessionInfo {
         id,
         server_version: session.server_version().to_owned(),
+        database: config.database,
     };
     sessions.open.lock().unwrap().insert(id, Arc::new(session));
     Ok(info)

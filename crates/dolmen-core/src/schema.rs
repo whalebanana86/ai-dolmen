@@ -29,6 +29,7 @@ pub struct Schema {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Table {
     pub name: String,
     pub kind: TableKind,
@@ -36,6 +37,8 @@ pub struct Table {
     pub constraints: Vec<Constraint>,
     /// Indexes that don't back a primary key, unique or exclusion constraint.
     pub indexes: Vec<Index>,
+    /// The `PARTITION BY` clause of a partitioned table, e.g. `RANGE (created_at)`.
+    pub partition_key: Option<String>,
     pub comment: Option<String>,
 }
 
@@ -56,9 +59,16 @@ pub struct Column {
     pub nullable: bool,
     pub default: Option<String>,
     pub identity: Option<Identity>,
-    /// The expression of a generated column.
-    pub generated: Option<String>,
+    pub generated: Option<Generated>,
     pub comment: Option<String>,
+}
+
+/// How a generated column computes its value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Generated {
+    pub expression: String,
+    /// Stored columns keep the computed value; virtual ones compute it on read.
+    pub stored: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

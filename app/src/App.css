@@ -17,6 +17,8 @@
   --syntax-string: #2f7d32;
   --syntax-number: #b4570b;
   --syntax-comment: #8a8a94;
+  --diff-add: #2b7a3d;
+  --diff-add-bg: #e9f7ec;
   --mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -46,6 +48,8 @@
     --syntax-string: #a5d6a7;
     --syntax-number: #f7a072;
     --syntax-comment: #7a7a85;
+    --diff-add: #8fd19e;
+    --diff-add-bg: #1f3325;
   }
 }
 
@@ -557,4 +561,189 @@ button.danger {
   height: 1px;
   margin: 4px 6px;
   background: var(--border);
+}
+
+/* Toolbar badge */
+
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.badge.ok {
+  background: var(--selection-match);
+  color: var(--accent);
+}
+
+/* Side panel (schema snapshot) */
+
+.panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  background: rgb(0 0 0 / 0.2);
+}
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  height: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 0.12);
+}
+
+.side-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.side-panel-header button {
+  padding: 2px 8px;
+}
+
+.side-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.side-panel-section p {
+  margin: 0;
+}
+
+.side-panel-section.grow {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.snapshot-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.snapshot-folder code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.change-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.change-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  background: none;
+  text-align: left;
+}
+
+.change-row:hover {
+  background: var(--active-line);
+}
+
+.change-kind {
+  width: 18px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.change-kind.added {
+  background: var(--diff-add-bg);
+  color: var(--diff-add);
+}
+
+.change-kind.modified {
+  background: var(--selection-match);
+  color: var(--accent);
+}
+
+.change-kind.removed {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.change-path {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.diff {
+  margin: 4px 0 8px;
+  padding: 6px 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff div {
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-header,
+.diff-hunk {
+  color: var(--muted);
+}
+
+.diff-add {
+  background: var(--diff-add-bg);
+  color: var(--diff-add);
+}
+
+.diff-remove {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.commit-message {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  resize: vertical;
 }

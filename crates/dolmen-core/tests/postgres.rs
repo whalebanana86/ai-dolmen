@@ -8,37 +8,11 @@ use std::time::Duration;
 
 use dolmen_core::Error;
 use dolmen_core::postgres::{ConnectConfig, Session, SslMode, StatementResult};
-use dolmen_core::schema::{Column, ConstraintKind, FunctionKind, Identity, TableKind};
+use dolmen_core::schema::{Column, ConstraintKind, FunctionKind, Generated, Identity, TableKind};
 
-fn test_config() -> Option<ConnectConfig> {
-    let host = std::env::var("DOLMEN_TEST_PG_HOST").ok()?;
-    let port = std::env::var("DOLMEN_TEST_PG_PORT")
-        .map(|port| {
-            port.parse()
-                .expect("DOLMEN_TEST_PG_PORT must be a port number")
-        })
-        .unwrap_or(5432);
-    Some(ConnectConfig {
-        host,
-        port,
-        user: "postgres".into(),
-        password: Some("postgres".into()),
-        database: "postgres".into(),
-        ssl_mode: SslMode::Prefer,
-    })
-}
-
-macro_rules! config_or_skip {
-    () => {
-        match test_config() {
-            Some(config) => config,
-            None => {
-                eprintln!("skipped: DOLMEN_TEST_PG_HOST is not set");
-                return;
-            }
-        }
-    };
-}
+#[macro_use]
+mod common;
+use common::test_config;
 
 async fn connect(config: &ConnectConfig) -> Session {
     Session::connect(config).await.expect("connect")
@@ -243,6 +217,8 @@ async fn introspects_the_database_structure() {
     )
     .await;
 
+    // The SET search_path above stays in the user's session; introspection
+    // still names every schema, so snapshots don't depend on session settings.
     let database = session.introspect().await.expect("introspect");
     execute(&session, "DROP SCHEMA introspect_test CASCADE").await;
 
@@ -316,14 +292,20 @@ async fn introspects_the_database_structure() {
     let column = |name: &str| posts.columns.iter().find(|c| c.name == name).unwrap();
     assert_eq!(
         column("id").default.as_deref(),
-        Some("nextval('posts_id_seq'::regclass)")
+        Some("nextval('introspect_test.posts_id_seq'::regclass)")
     );
-    assert_eq!(column("mood").data_type, "mood");
-    assert_eq!(column("mood").default.as_deref(), Some("'ok'::mood"));
+    assert_eq!(column("mood").data_type, "introspect_test.mood");
+    assert_eq!(
+        column("mood").default.as_deref(),
+        Some("'ok'::introspect_test.mood")
+    );
     assert_eq!(column("title").comment.as_deref(), Some("shown in lists"));
     assert_eq!(
-        column("title_length").generated.as_deref(),
-        Some("length(title)")
+        column("title_length").generated,
+        Some(Generated {
+            expression: "length(title)".into(),
+            stored: true
+        })
     );
     assert_eq!(column("title_length").default, None);
     assert!(
@@ -331,7 +313,8 @@ async fn introspects_the_database_structure() {
             .constraints
             .iter()
             .any(|c| c.kind == ConstraintKind::ForeignKey
-                && c.definition == "FOREIGN KEY (author_id) REFERENCES authors(id)")
+                && c.definition
+                    == "FOREIGN KEY (author_id) REFERENCES introspect_test.authors(id)")
     );
     assert!(
         posts
