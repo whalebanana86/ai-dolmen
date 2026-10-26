@@ -28,6 +28,17 @@ pub enum Error {
     /// The session is closed.
     #[error("connection is closed")]
     Closed,
+    /// Reading or writing saved connections or their passwords failed.
+    #[error("{message}")]
+    Storage { message: String },
+}
+
+impl From<keyring_core::Error> for Error {
+    fn from(err: keyring_core::Error) -> Self {
+        Error::Storage {
+            message: format!("credential store: {err}"),
+        }
+    }
 }
 
 impl From<tokio_postgres::Error> for Error {

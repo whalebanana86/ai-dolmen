@@ -43,7 +43,7 @@ impl fmt::Debug for ConnectConfig {
 }
 
 /// TLS behaviour, named after libpq's `sslmode` values.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SslMode {
     /// Never use TLS.

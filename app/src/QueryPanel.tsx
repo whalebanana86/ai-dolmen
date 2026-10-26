@@ -6,7 +6,7 @@ import {
   StatementResult,
   TextRange,
   errorMessage,
-  isDbError,
+  isAppError,
   pg,
   sqlText,
 } from "./api";
@@ -155,7 +155,7 @@ async function statementsToRun(sql: string, selectionStart: number, selectionEnd
 }
 
 function ErrorView({ error, location }: { error: unknown; location: Location | null }) {
-  const db = isDbError(error) && error.kind === "database" ? error : null;
+  const db = isAppError(error) && error.kind === "database" ? error : null;
 
   return (
     <div className="error-box">
@@ -188,7 +188,7 @@ function errorLocation(
   statement: string,
   error: unknown,
 ): Location | null {
-  if (!isDbError(error) || error.kind !== "database" || !error.position) return null;
+  if (!isAppError(error) || error.kind !== "database" || !error.position) return null;
   const before = sql.slice(0, statementStart) + [...statement].slice(0, error.position - 1).join("");
   const lines = before.split("\n");
   return { line: lines.length, column: [...lines[lines.length - 1]].length + 1 };

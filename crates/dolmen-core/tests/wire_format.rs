@@ -1,6 +1,7 @@
 //! The JSON shapes the desktop app relies on (see `app/src/api.ts`).
 
 use dolmen_core::Error;
+use dolmen_core::connections::{PasswordChange, SavedConnection};
 use dolmen_core::postgres::{ConnectConfig, SchemaOutline, SslMode, StatementResult, TableOutline};
 use serde_json::json;
 
@@ -93,5 +94,59 @@ fn errors_are_tagged_by_kind() {
     assert_eq!(
         serde_json::to_value(Error::Closed).unwrap(),
         json!({ "kind": "closed" })
+    );
+}
+
+#[test]
+fn saved_connections_use_camel_case() {
+    let connection = SavedConnection {
+        id: "abc".into(),
+        name: "local".into(),
+        host: "localhost".into(),
+        port: 5432,
+        user: "postgres".into(),
+        database: "postgres".into(),
+        ssl_mode: SslMode::VerifyFull,
+        has_password: true,
+    };
+    let value = serde_json::to_value(&connection).unwrap();
+    assert_eq!(
+        value,
+        json!({
+            "id": "abc",
+            "name": "local",
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
+            "database": "postgres",
+            "sslMode": "verify-full",
+            "hasPassword": true,
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<SavedConnection>(value).unwrap(),
+        connection
+    );
+}
+
+#[test]
+fn password_changes_are_tagged_by_kind() {
+    let change: PasswordChange =
+        serde_json::from_value(json!({ "kind": "set", "password": "pw" })).unwrap();
+    assert!(matches!(change, PasswordChange::Set { password } if password == "pw"));
+    assert!(matches!(
+        serde_json::from_value(json!({ "kind": "keep" })).unwrap(),
+        PasswordChange::Keep
+    ));
+    assert!(matches!(
+        serde_json::from_value(json!({ "kind": "forget" })).unwrap(),
+        PasswordChange::Forget
+    ));
+    assert_eq!(
+        serde_json::to_value(Error::Storage {
+            message: "disk full".into()
+        })
+        .unwrap(),
+        json!({ "kind": "storage", "message": "disk full" })
     );
 }

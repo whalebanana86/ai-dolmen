@@ -2,6 +2,7 @@
 //!
 //! Shared by the desktop app (`dolmen-app`) and the command-line tool (`dolmen`).
 
+pub mod connections;
 mod error;
 pub mod postgres;
 pub mod sql;

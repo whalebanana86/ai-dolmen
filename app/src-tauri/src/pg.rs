@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dolmen_core::Error;
+use dolmen_core::connections::ConnectionStore;
 use dolmen_core::postgres::{ConnectConfig, SchemaOutline, Session, StatementResult};
 use serde::Serialize;
 use tauri::State;
@@ -37,11 +38,18 @@ pub struct SessionInfo {
     server_version: String,
 }
 
+/// Connects with `config`. Without a password in `config`, the stored password of
+/// the saved connection `saved_id` is used, so it never has to reach the UI.
 #[tauri::command]
 pub async fn pg_connect(
-    config: ConnectConfig,
+    mut config: ConnectConfig,
+    saved_id: Option<String>,
     sessions: State<'_, Sessions>,
+    connections: State<'_, ConnectionStore>,
 ) -> Result<SessionInfo, Error> {
+    if let (None, Some(id)) = (&config.password, &saved_id) {
+        config.password = connections.password(id)?;
+    }
     let session = Session::connect(&config).await?;
     let id = sessions.next_id.fetch_add(1, Ordering::Relaxed);
     let info = SessionInfo {

@@ -114,23 +114,92 @@ button:disabled {
 
 .connect-card {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: 420px;
-  padding: 24px;
+  width: 720px;
+  max-width: 100%;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
+  overflow: hidden;
 }
 
-.connect-card header {
+.saved-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 240px;
+  flex-shrink: 0;
+  padding: 16px 12px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.saved-list header {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  padding: 4px 8px 12px;
 }
 
-.connect-card p {
+.saved-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 8px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.saved-item span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-item .muted {
+  font-size: 12px;
+}
+
+.saved-item.selected {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.connect-form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+}
+
+.connect-form p {
   margin: 0;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.checkbox input {
+  width: auto;
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .field {
