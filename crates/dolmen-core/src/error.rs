@@ -31,6 +31,10 @@ pub enum Error {
     /// Reading or writing saved connections or their passwords failed.
     #[error("{message}")]
     Storage { message: String },
+    /// A safety rule stopped the action, such as applying a plan to a database
+    /// that isn't local.
+    #[error("{message}")]
+    Refused { message: String },
 }
 
 impl From<keyring_core::Error> for Error {

@@ -241,6 +241,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           statusError={snapshotError}
           checking={checkingSnapshot}
           onRefresh={refreshSnapshot}
+          onDatabaseChanged={refreshSchema}
           onClose={() => setSnapshotOpen(false)}
         />
       )}

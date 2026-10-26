@@ -127,7 +127,8 @@ export type AppError =
     }
   | { kind: "connection"; message: string }
   | { kind: "closed" }
-  | { kind: "storage"; message: string };
+  | { kind: "storage"; message: string }
+  | { kind: "refused"; message: string };
 
 export function appVersion() {
   return invoke<string>("app_version");
@@ -212,6 +213,25 @@ export interface SnapshotStatus {
   initialized: boolean;
 }
 
+/** Treats a drop and an add as a rename, which keeps the data. */
+export type Rename =
+  | { kind: "table"; schema: string; from: string; to: string }
+  | { kind: "column"; schema: string; table: string; from: string; to: string };
+
+export interface Plan {
+  steps: { sql: string; destructive: boolean }[];
+  /** Changes Dolmen can't make; a plan with blockers can't be applied. */
+  blockers: string[];
+  /** Drops paired with adds that look like renames. */
+  renameCandidates: Rename[];
+}
+
+export interface ApplyPreview {
+  plan: Plan;
+  /** Only local databases take snapshot plans. */
+  local: boolean;
+}
+
 export const snapshots = {
   status: (sessionId: number, dir: string) =>
     invoke<SnapshotStatus>("snapshot_status", { sessionId, dir }),
@@ -229,6 +249,18 @@ export const snapshots = {
   /** What would change in the database to make it match the snapshot at `rev`. */
   compare: (sessionId: number, dir: string, rev: string) =>
     invoke<FileChange[]>("snapshot_compare", { sessionId, dir, rev }),
+  /** The plan that makes the database match the snapshot at `rev`, or the folder's files when null. */
+  plan: (sessionId: number, dir: string, rev: string | null, renames: Rename[]) =>
+    invoke<ApplyPreview>("snapshot_plan", { sessionId, dir, rev, renames }),
+  /** Applies the reviewed plan, which the backend makes again and checks against `reviewed`. */
+  apply: (
+    sessionId: number,
+    dir: string,
+    rev: string | null,
+    renames: Rename[],
+    reviewed: string[],
+    allowDestructive: boolean,
+  ) => invoke<void>("snapshot_apply", { sessionId, dir, rev, renames, reviewed, allowDestructive }),
   /** The CREATE statement for one object, as written in snapshots. */
   createStatement: (schema: string, object: SchemaObject) =>
     invoke<string>("ddl_create_statement", { schema, object }),

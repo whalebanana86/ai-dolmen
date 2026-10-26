@@ -163,3 +163,45 @@ fn password_changes_are_tagged_by_kind() {
         json!({ "kind": "storage", "message": "disk full" })
     );
 }
+
+#[test]
+fn plans_and_renames_use_camel_case_and_kind_tags() {
+    use dolmen_core::postgres::migrate::{Plan, Rename, Step};
+
+    let rename = Rename::Column {
+        schema: "app".into(),
+        table: "users".into(),
+        from: "email".into(),
+        to: "mail".into(),
+    };
+    let plan = Plan {
+        steps: vec![Step {
+            sql: "ALTER TABLE app.users DROP COLUMN email;".into(),
+            destructive: true,
+        }],
+        blockers: vec![],
+        rename_candidates: vec![rename.clone()],
+    };
+    assert_eq!(
+        serde_json::to_value(&plan).unwrap(),
+        json!({
+            "steps": [{ "sql": "ALTER TABLE app.users DROP COLUMN email;", "destructive": true }],
+            "blockers": [],
+            "renameCandidates": [
+                { "kind": "column", "schema": "app", "table": "users", "from": "email", "to": "mail" }
+            ],
+        })
+    );
+    let back: Rename = serde_json::from_value(json!({
+        "kind": "column", "schema": "app", "table": "users", "from": "email", "to": "mail"
+    }))
+    .unwrap();
+    assert_eq!(back, rename);
+    assert_eq!(
+        serde_json::to_value(Error::Refused {
+            message: "no".into()
+        })
+        .unwrap(),
+        json!({ "kind": "refused", "message": "no" })
+    );
+}

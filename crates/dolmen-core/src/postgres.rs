@@ -17,6 +17,7 @@ use crate::schema::Database;
 
 pub mod ddl;
 mod introspect;
+pub mod migrate;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const INTROSPECTION_ATTEMPTS: u64 = 5;
@@ -87,6 +88,20 @@ impl ConnectConfig {
             password,
             ssl_mode,
         })
+    }
+}
+
+impl ConnectConfig {
+    /// Whether the server runs on this machine: `localhost`, a loopback
+    /// address or a Unix socket. Only local databases take snapshot plans.
+    pub fn is_local(&self) -> bool {
+        self.host.eq_ignore_ascii_case("localhost")
+            || self.host.starts_with('/')
+            || self
+                .host
+                .trim_matches(|c| c == '[' || c == ']')
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
     }
 }
 
@@ -310,6 +325,61 @@ impl Session {
                 result => return result,
             }
         }
+    }
+
+    /// Whether the session's server runs on this machine; see [`ConnectConfig::is_local`].
+    pub fn is_local(&self) -> bool {
+        self.config.is_local()
+    }
+
+    /// Runs a migration plan in one transaction, so it applies completely or
+    /// not at all. It runs on the metadata connection: the user's session may
+    /// be inside its own transaction, and the plan names every schema anyway.
+    /// Function bodies aren't checked while creating them, as in a pg_dump
+    /// restore, since they may read tables created later in the plan.
+    pub async fn apply(&self, plan: &migrate::Plan) -> Result<(), Error> {
+        let mut metadata = self.metadata.lock().await;
+        if metadata.as_ref().is_none_or(Client::is_closed) {
+            *metadata = Some(
+                open(&self.config, Some("-c search_path=pg_catalog"))
+                    .await?
+                    .0,
+            );
+        }
+        let client = metadata.as_mut().expect("opened above");
+        let transaction = client.transaction().await?;
+        transaction
+            .batch_execute(
+                "SET LOCAL check_function_bodies = false; SET LOCAL lock_timeout = '10s'",
+            )
+            .await?;
+        for (i, step) in plan.steps.iter().enumerate() {
+            if let Err(err) = transaction.batch_execute(&step.sql).await {
+                return Err(match Error::from(err) {
+                    Error::Database {
+                        message,
+                        code,
+                        detail,
+                        hint,
+                        ..
+                    } => Error::Database {
+                        message: format!(
+                            "Step {} of {} failed, so nothing was changed: {message}",
+                            i + 1,
+                            plan.steps.len()
+                        ),
+                        code,
+                        detail,
+                        hint,
+                        // The position points into the step, not the editor.
+                        position: None,
+                    },
+                    other => other,
+                });
+            }
+        }
+        transaction.commit().await?;
+        Ok(())
     }
 
     /// The schema unqualified names resolve to first, usually `public`.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Commit, FileChange, SnapshotStatus, errorMessage, snapshots } from "./api";
+import { ApplyDialog } from "./ApplyDialog";
 import { GitGraph } from "./GitGraph";
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
   statusError: string | null;
   checking: boolean;
   onRefresh: () => void;
+  /** Called after a snapshot was applied to the database. */
+  onDatabaseChanged: () => void;
   onClose: () => void;
 }
 
@@ -31,9 +34,11 @@ export function SnapshotPanel({
   statusError,
   checking,
   onRefresh,
+  onDatabaseChanged,
   onClose,
 }: Props) {
   const [tab, setTab] = useState<Tab>("changes");
+  const [applyTarget, setApplyTarget] = useState<{ rev: string | null; label: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -165,9 +170,32 @@ export function SnapshotPanel({
             checking={checking}
             busy={busy}
             act={act}
+            onApplyFiles={() => setApplyTarget({ rev: null, label: "the snapshot files" })}
           />
         )}
-        {dir && tab === "history" && <HistoryTab sessionId={sessionId} dir={dir} version={historyVersion} />}
+        {dir && tab === "history" && (
+          <HistoryTab
+            sessionId={sessionId}
+            dir={dir}
+            version={historyVersion}
+            onApply={(rev, label) => setApplyTarget({ rev, label })}
+          />
+        )}
+        {dir && applyTarget && (
+          <ApplyDialog
+            sessionId={sessionId}
+            dir={dir}
+            rev={applyTarget.rev}
+            label={applyTarget.label}
+            onClose={() => setApplyTarget(null)}
+            onApplied={() => {
+              setResult({ text: `Updated the database to match ${applyTarget.label}`, error: false });
+              onRefresh();
+              onDatabaseChanged();
+              setHistoryVersion((v) => v + 1);
+            }}
+          />
+        )}
 
         {result && (
           <p className={`side-panel-section ${result.error ? "error-text" : "muted"}`}>{result.text}</p>
@@ -186,9 +214,21 @@ interface ChangesTabProps {
   checking: boolean;
   busy: boolean;
   act: (action: () => Promise<string>) => void;
+  /** Opens the plan that makes the database match the folder's files. */
+  onApplyFiles: () => void;
 }
 
-function ChangesTab({ sessionId, database, dir, status, statusError, checking, busy, act }: ChangesTabProps) {
+function ChangesTab({
+  sessionId,
+  database,
+  dir,
+  status,
+  statusError,
+  checking,
+  busy,
+  act,
+  onApplyFiles,
+}: ChangesTabProps) {
   const changes = status?.changes ?? [];
   const repository = status?.repository ?? null;
   const [message, setMessage] = useState("");
@@ -242,6 +282,15 @@ function ChangesTab({ sessionId, database, dir, status, statusError, checking, b
             <button onClick={() => save(false, false)} disabled={busy}>
               Write files
             </button>
+            {status?.initialized && (
+              <button
+                onClick={onApplyFiles}
+                disabled={busy}
+                title="Change the database to match the files, e.g. after checking out an older commit"
+              >
+                Update database…
+              </button>
+            )}
             <span className="spacer" />
             <button
               onClick={() => save(true, false)}
@@ -262,7 +311,14 @@ function ChangesTab({ sessionId, database, dir, status, statusError, checking, b
   );
 }
 
-function HistoryTab({ sessionId, dir, version }: { sessionId: number; dir: string; version: number }) {
+interface HistoryTabProps {
+  sessionId: number;
+  dir: string;
+  version: number;
+  onApply: (rev: string, label: string) => void;
+}
+
+function HistoryTab({ sessionId, dir, version, onApply }: HistoryTabProps) {
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Commit | null>(null);
@@ -293,6 +349,12 @@ function HistoryTab({ sessionId, dir, version }: { sessionId: number; dir: strin
     [sessionId, dir],
   );
 
+  // Compare again after the database or history changed.
+  useEffect(() => {
+    if (selected) compare(selected);
+    // Only on reloads, not when a commit is picked.
+  }, [version]);
+
   const label = selected
     ? (selected.refs.find((ref) => ref.startsWith("tag: "))?.replace(/^tag: /, "") ?? selected.hash.slice(0, 7))
     : "";
@@ -314,7 +376,16 @@ function HistoryTab({ sessionId, dir, version }: { sessionId: number; dir: strin
           {comparison && comparison.length === 0 && (
             <p className="muted">The database already matches this commit's snapshot.</p>
           )}
-          {comparison && comparison.length > 0 && <ChangeList changes={comparison} />}
+          {comparison && comparison.length > 0 && (
+            <>
+              <ChangeList changes={comparison} />
+              <div className="actions">
+                <button className="primary" onClick={() => onApply(selected.hash, label)}>
+                  Update database to match {label}…
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </section>
@@ -348,6 +419,13 @@ function ChangeList({ changes }: { changes: FileChange[] }) {
 }
 
 function Diff({ text }: { text: string }) {
+  if (!text) {
+    return (
+      <p className="muted diff-note">
+        The schema model the DDL was written from. It lets Dolmen apply this snapshot to a database later.
+      </p>
+    );
+  }
   return (
     <pre className="diff">
       {text

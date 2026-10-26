@@ -41,6 +41,8 @@ pub fn run() {
             snapshot::snapshot_push,
             snapshot::snapshot_history,
             snapshot::snapshot_compare,
+            snapshot::snapshot_plan,
+            snapshot::snapshot_apply,
             snapshot::ddl_create_statement,
             sql::sql_statement_at,
             sql::sql_split,

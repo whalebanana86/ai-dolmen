@@ -866,3 +866,112 @@ code {
   flex-direction: column;
   gap: 8px;
 }
+
+/* Apply dialog */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.3);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.25);
+}
+
+.dialog-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.dialog-body p {
+  margin: 0;
+}
+
+.dialog-body ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+.dialog-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.rename-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 24px;
+}
+
+.plan-steps li::marker {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.plan-steps pre {
+  margin: 0;
+  padding: 6px 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.plan-steps li.destructive pre {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.step-warning {
+  display: inline-block;
+  margin-bottom: 3px;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.destructive-consent {
+  align-items: flex-start;
+  color: var(--danger);
+}
+
+button.primary.danger-fill {
+  border-color: var(--danger);
+  background: var(--danger);
+}
+
+.diff-note {
+  margin: 4px 0 8px 26px;
+  font-size: 12px;
+}
