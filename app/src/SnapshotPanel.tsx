@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Commit, FileChange, SnapshotRemote, SnapshotStatus, errorMessage, snapshots } from "./api";
+import { Commit, FileChange, Repository, SnapshotRemote, SnapshotStatus, errorMessage, snapshots } from "./api";
 import { ApplyDialog } from "./ApplyDialog";
 import { GitGraph } from "./GitGraph";
 import type { Messages } from "./i18n/en";
@@ -84,7 +84,7 @@ export function SnapshotPanel({
     onRefresh();
   }
 
-  /** Runs a Git action, then reloads the status and history. */
+  /** Runs a Git action, then reloads the status and history. Resolves to whether it worked. */
   async function act(action: () => Promise<string>) {
     setBusy(true);
     setResult(null);
@@ -92,8 +92,10 @@ export function SnapshotPanel({
       setResult({ text: await action(), error: false });
       onRefresh();
       setHistoryVersion((v) => v + 1);
+      return true;
     } catch (error) {
       setResult({ text: errorMessage(error, t), error: true });
+      return false;
     } finally {
       setBusy(false);
     }
@@ -104,6 +106,23 @@ export function SnapshotPanel({
       await snapshots.push(dir!);
       return t.snapshot.pushed;
     });
+
+  const createBranch = (name: string) =>
+    act(async () => {
+      await snapshots.createBranch(dir!, name);
+      return t.snapshot.branches.created(name);
+    });
+
+  // Like checking out code: the files change, then the database can follow.
+  const switchBranch = (name: string) =>
+    act(async () => {
+      await snapshots.switchBranch(dir!, name);
+      setApplyTarget({ rev: null, label: t.snapshot.branches.label(name) });
+      return t.snapshot.branches.switched(name);
+    });
+
+  // Database changes not in the snapshot, which matching another branch would undo.
+  const unsaved = status?.changes.filter((change) => change.path !== MODEL_FILE).length ?? 0;
 
   // Commits waiting to be pushed, or a branch that was never pushed.
   const toPush = !repository
@@ -181,20 +200,22 @@ export function SnapshotPanel({
           {statusError && !dir && <p className="error-text">{statusError}</p>}
           {dir && status && !repository && <p className="muted">{t.snapshot.notInRepository}</p>}
           {repository && (
-            <div className="repo-line">
-              <span className="muted">
-                Git: {repository.root}
-                {repository.branch && ` · ${repository.branch}`}
-                {repository.upstream && ` → ${repository.upstream}`}
-                {repository.behind > 0 && ` · ${t.snapshot.behind(repository.behind)}`}
-              </span>
-              <span className="spacer" />
-              {toPush !== 0 && (
-                <button onClick={push} disabled={busy}>
-                  {toPush === "unpublished" ? t.snapshot.publishBranch : t.snapshot.push(toPush)}
-                </button>
-              )}
-            </div>
+            <>
+              <p className="muted">Git: {repository.root}</p>
+              <BranchBar
+                repository={repository}
+                unsaved={unsaved}
+                busy={busy}
+                onCreate={createBranch}
+                onSwitch={switchBranch}
+              >
+                {toPush !== 0 && (
+                  <button onClick={push} disabled={busy}>
+                    {toPush === "unpublished" ? t.snapshot.publishBranch : t.snapshot.push(toPush)}
+                  </button>
+                )}
+              </BranchBar>
+            </>
           )}
           {dir && status && !status.initialized && <p className="muted">{t.snapshot.firstWrite}</p>}
         </section>
@@ -245,6 +266,128 @@ export function SnapshotPanel({
         )}
       </aside>
     </div>
+  );
+}
+
+const MODEL_FILE = "dolmen-model.json";
+
+/**
+ * Shows the checked-out branch and switches or creates branches. Switching
+ * while the database has changes the snapshot doesn't have asks first, since
+ * matching the other branch would undo them.
+ */
+function BranchBar({
+  repository,
+  unsaved,
+  busy,
+  onCreate,
+  onSwitch,
+  children,
+}: {
+  repository: Repository;
+  unsaved: number;
+  busy: boolean;
+  onCreate: (name: string) => Promise<boolean>;
+  onSwitch: (name: string) => Promise<boolean>;
+  children: ReactNode;
+}) {
+  const t = useT();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [confirming, setConfirming] = useState<string | null>(null);
+
+  // A new repository's branch has no commits, so Git doesn't list it yet.
+  const branches =
+    repository.branch && !repository.branches.includes(repository.branch)
+      ? [repository.branch, ...repository.branches]
+      : repository.branches;
+
+  function pick(branch: string) {
+    setCreating(false);
+    if (unsaved > 0) setConfirming(branch);
+    else onSwitch(branch);
+  }
+
+  return (
+    <>
+      <div className="repo-line">
+        <label className="branch-picker">
+          {t.snapshot.branches.branch}
+          <select value={repository.branch ?? ""} onChange={(e) => pick(e.target.value)} disabled={busy}>
+            {!repository.branch && (
+              <option value="" disabled>
+                {t.snapshot.branches.detached}
+              </option>
+            )}
+            {branches.map((branch) => (
+              <option key={branch} value={branch}>
+                {branch}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="muted">
+          {repository.upstream && `→ ${repository.upstream}`}
+          {repository.behind > 0 && ` · ${t.snapshot.behind(repository.behind)}`}
+        </span>
+        <span className="spacer" />
+        <button
+          onClick={() => {
+            setConfirming(null);
+            setCreating(!creating);
+          }}
+          disabled={busy}
+        >
+          {t.snapshot.branches.newBranch}
+        </button>
+        {children}
+      </div>
+      {creating && (
+        <form
+          className="repo-line"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (await onCreate(name.trim())) {
+              setCreating(false);
+              setName("");
+            }
+          }}
+        >
+          <input
+            autoFocus
+            value={name}
+            placeholder={t.snapshot.branches.namePlaceholder}
+            onChange={(e) => setName(e.target.value)}
+            aria-label={t.snapshot.branches.newBranch}
+          />
+          <button type="button" onClick={() => setCreating(false)}>
+            {t.common.cancel}
+          </button>
+          <button type="submit" className="primary" disabled={busy || !name.trim()}>
+            {t.snapshot.branches.create}
+          </button>
+        </form>
+      )}
+      {confirming && (
+        <div className="error-box">
+          <p>{t.snapshot.branches.unsaved(unsaved, confirming)}</p>
+          <div className="actions">
+            <span className="spacer" />
+            <button onClick={() => setConfirming(null)}>{t.common.cancel}</button>
+            <button
+              className="primary danger-fill"
+              onClick={() => {
+                onSwitch(confirming);
+                setConfirming(null);
+              }}
+              disabled={busy}
+            >
+              {t.snapshot.branches.switchAnyway}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

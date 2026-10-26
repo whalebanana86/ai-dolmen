@@ -5,6 +5,7 @@ use std::process::Command;
 
 use dolmen_core::Error;
 use dolmen_core::postgres::Session;
+use dolmen_core::postgres::migrate;
 use dolmen_core::schema::{Column, Database, EnumType, Schema, Table, TableKind, View};
 use dolmen_core::snapshot::{ChangeKind, MARKER, MODEL_FILE, Snapshot};
 use dolmen_core::{git, schema};
@@ -409,6 +410,79 @@ fn clones_syncs_and_pushes_a_schema_repository() {
 }
 
 #[test]
+fn creates_and_switches_branches() {
+    let repo = repository();
+    let folder = repo.path().join("db").join("schema");
+    Snapshot::of(&database()).write(&folder).unwrap();
+    git::commit(&folder, "First snapshot").unwrap();
+
+    git::create_branch(&folder, "drop-mood").unwrap();
+    let mut changed = database();
+    changed.schemas[0].enums.clear();
+    Snapshot::of(&changed).write(&folder).unwrap();
+    git::commit(&folder, "Drop mood").unwrap();
+    let repository = git::repository(&folder).unwrap().unwrap();
+    assert_eq!(repository.branch.as_deref(), Some("drop-mood"));
+    assert_eq!(repository.branches, ["drop-mood", "main"]);
+
+    // The files follow the branch, like code.
+    git::switch_branch(&folder, "main").unwrap();
+    assert_eq!(Snapshot::read(&folder).unwrap(), Snapshot::of(&database()));
+    git::switch_branch(&folder, "drop-mood").unwrap();
+    assert_eq!(Snapshot::read(&folder).unwrap(), Snapshot::of(&changed));
+
+    // Uncommitted snapshot files would be carried to the other branch.
+    Snapshot::of(&database()).write(&folder).unwrap();
+    assert!(matches!(
+        git::switch_branch(&folder, "main"),
+        Err(Error::Refused {
+            reason: dolmen_core::Refusal::UncommittedChanges,
+            ..
+        })
+    ));
+    assert_eq!(
+        git::repository(&folder).unwrap().unwrap().branch.as_deref(),
+        Some("drop-mood")
+    );
+
+    for name in ["-f", "a..b", "with space", ""] {
+        assert!(git::create_branch(&folder, name).is_err(), "{name:?}");
+    }
+}
+
+#[test]
+fn switches_to_branches_that_exist_only_on_the_remote() {
+    let remote = TempDir::new().unwrap();
+    run_git(
+        remote.path(),
+        &["init", "--quiet", "--bare", "--initial-branch=main"],
+    );
+    let url = remote.path().to_str().unwrap();
+    let home = TempDir::new().unwrap();
+    let mine = home.path().join("mine");
+    git::clone(url, &mine).unwrap();
+    configure(&mine);
+    let folder = mine.join("db").join("schema");
+    Snapshot::of(&database()).write(&folder).unwrap();
+    git::commit(&folder, "First snapshot").unwrap();
+    git::push(&folder).unwrap();
+    git::create_branch(&folder, "feature").unwrap();
+    git::push(&folder).unwrap();
+
+    let theirs = home.path().join("theirs");
+    git::clone(url, &theirs).unwrap();
+    let folder = theirs.join("db").join("schema");
+    assert_eq!(
+        git::repository(&folder).unwrap().unwrap().branches,
+        ["main", "feature"]
+    );
+    git::switch_branch(&folder, "feature").unwrap();
+    let repository = git::repository(&folder).unwrap().unwrap();
+    assert_eq!(repository.branch.as_deref(), Some("feature"));
+    assert_eq!(repository.upstream.as_deref(), Some("origin/feature"));
+}
+
+#[test]
 fn finds_no_repository_outside_git() {
     let dir = TempDir::new().unwrap();
     assert_eq!(git::repository(&dir.path().join("missing")).unwrap(), None);
@@ -560,4 +634,113 @@ async fn snapshots_ignore_the_sessions_search_path() {
             .iter()
             .any(|(_, sql)| sql.contains("REFERENCES search_path_test.a(id)"))
     );
+}
+
+/// The table's columns and their types, as the database reports them.
+async fn column_types(session: &Session, schema: &str, table: &str) -> Vec<(String, String)> {
+    let result = session
+        .execute(
+            &format!(
+                "SELECT column_name::text, format_type(atttypid, atttypmod)
+                 FROM information_schema.columns c
+                 JOIN pg_attribute a ON a.attrelid = '{schema}.{table}'::regclass AND a.attname = c.column_name
+                 WHERE table_schema = '{schema}' AND table_name = '{table}'
+                 ORDER BY ordinal_position"
+            ),
+            100,
+        )
+        .await
+        .unwrap();
+    match &result[0] {
+        dolmen_core::postgres::StatementResult::Rows { rows, .. } => rows
+            .iter()
+            .map(|row| (row[0].clone().unwrap(), row[1].clone().unwrap()))
+            .collect(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Like code: change a column on a branch and commit it, switch back to main,
+/// and the database follows the branch's snapshot, keeping the rows.
+#[tokio::test]
+async fn databases_follow_branch_switches() {
+    let config = config_or_skip!();
+    let _exclusive = exclusive().await;
+    let session = Session::connect(&config).await.expect("connect");
+    const SCHEMA: &str = "branch_test";
+    let model = || async {
+        let mut database = session.introspect().await.unwrap();
+        database.schemas.retain(|s| s.name == SCHEMA);
+        database.extensions.clear();
+        database
+    };
+    let apply_files = |folder: std::path::PathBuf| {
+        let model = &model;
+        let session = &session;
+        async move {
+            let target = Snapshot::read(&folder).unwrap().model().unwrap().clone();
+            let plan = migrate::plan(&model().await, &target, &[]);
+            assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+            session.apply(&plan).await.unwrap();
+            plan
+        }
+    };
+    session
+        .execute(
+            &format!(
+                "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;
+                 CREATE SCHEMA {SCHEMA};
+                 CREATE TABLE {SCHEMA}.users (id int PRIMARY KEY, name varchar(50) NOT NULL);
+                 INSERT INTO {SCHEMA}.users VALUES (1, 'kim'), (2, 'lee');"
+            ),
+            0,
+        )
+        .await
+        .unwrap();
+    let repo = repository();
+    let folder = repo.path().join("db").join("schema");
+    Snapshot::of(&model().await).write(&folder).unwrap();
+    git::commit(&folder, "Users").unwrap();
+    let before = column_types(&session, SCHEMA, "users").await;
+
+    // On a branch: widen a column, add one, and commit the snapshot.
+    git::create_branch(&folder, "widen-name").unwrap();
+    session
+        .execute(
+            &format!(
+                "ALTER TABLE {SCHEMA}.users ALTER COLUMN name TYPE varchar(200);
+                 ALTER TABLE {SCHEMA}.users ADD COLUMN email text"
+            ),
+            0,
+        )
+        .await
+        .unwrap();
+    Snapshot::of(&model().await).write(&folder).unwrap();
+    git::commit(&folder, "Widen name, add email").unwrap();
+    let after = column_types(&session, SCHEMA, "users").await;
+    assert_ne!(before, after);
+
+    // Back on main, the database follows the files.
+    git::switch_branch(&folder, "main").unwrap();
+    let back = apply_files(folder.clone()).await;
+    assert!(back.is_destructive(), "dropping email loses its data");
+    assert_eq!(column_types(&session, SCHEMA, "users").await, before);
+    let rows = session
+        .execute(&format!("SELECT count(*) FROM {SCHEMA}.users"), 1)
+        .await
+        .unwrap();
+    assert!(
+        matches!(&rows[0], dolmen_core::postgres::StatementResult::Rows { rows, .. } if rows[0][0].as_deref() == Some("2"))
+    );
+
+    // And forward again.
+    git::switch_branch(&folder, "widen-name").unwrap();
+    apply_files(folder.clone()).await;
+    assert_eq!(column_types(&session, SCHEMA, "users").await, after);
+    assert!(apply_files(folder.clone()).await.steps.is_empty());
+
+    session
+        .execute(&format!("DROP SCHEMA {SCHEMA} CASCADE"), 0)
+        .await
+        .unwrap();
 }

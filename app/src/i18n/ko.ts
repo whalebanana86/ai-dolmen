@@ -25,6 +25,7 @@ export const ko: Messages = {
       noModel:
         "이 스냅샷에는 dolmen-model.json이 없어 적용할 수 없습니다. Dolmen이 모델을 저장하기 전에 만든 스냅샷입니다. 새 스냅샷을 쓰고 커밋하면 나중에 적용할 수 있습니다.",
       badSnapshotPath: "스냅샷 폴더는 db/schema처럼 저장소 안의 경로여야 합니다.",
+      uncommittedChanges: "스냅샷 폴더에 커밋하지 않은 변경이 있습니다. 커밋하거나 되돌린 뒤 브랜치를 바꿔 주세요.",
     },
   },
 
@@ -130,6 +131,20 @@ export const ko: Messages = {
     sshHint:
       "이 주소는 기본 SSH 키로 접속하는데, 그 키가 다른 GitHub 계정의 것일 수 있습니다. ~/.ssh/config의 별칭 주소를 쓰면 별칭에 지정한 키의 계정으로 접속합니다:",
     useAddress: (url) => `${url} 사용`,
+
+    branches: {
+      branch: "브랜치",
+      detached: "(브랜치 없음)",
+      newBranch: "새 브랜치",
+      namePlaceholder: "feature/widen-names",
+      create: "만들기",
+      created: (name) => `${name} 브랜치를 만들었습니다`,
+      switched: (name) => `${name} 브랜치로 바꿨습니다`,
+      label: (name) => `${name} 브랜치`,
+      unsaved: (n, name) =>
+        `데이터베이스에 스냅샷에 없는 변경이 ${n}개 있습니다. ${name}(으)로 바꾸고 데이터베이스를 맞추면 이 변경은 되돌아갑니다.`,
+      switchAnyway: "그래도 바꾸기",
+    },
 
     location: {
       intro:

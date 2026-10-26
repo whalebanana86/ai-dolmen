@@ -138,7 +138,8 @@ export type Refusal =
   | "planBlocked"
   | "destructiveNotAllowed"
   | "noModel"
-  | "badSnapshotPath";
+  | "badSnapshotPath"
+  | "uncommittedChanges";
 
 export function appVersion() {
   return invoke<string>("app_version");
@@ -205,6 +206,8 @@ export interface Repository {
   ahead: number;
   behind: number;
   remotes: string[];
+  /** Local branches, then remote branches with no local branch of the same name. */
+  branches: string[];
 }
 
 export interface Commit {
@@ -277,6 +280,10 @@ export const snapshots = {
       push,
     }),
   push: (dir: string) => invoke<void>("snapshot_push", { dir }),
+  /** Creates a branch at the current commit and checks it out. */
+  createBranch: (dir: string, name: string) => invoke<void>("snapshot_create_branch", { dir, name }),
+  /** Checks out a branch; refused while the snapshot folder has uncommitted changes. */
+  switchBranch: (dir: string, name: string) => invoke<void>("snapshot_switch_branch", { dir, name }),
   /** Recent commits of the repository holding `dir`, on all branches and tags. */
   history: (dir: string) => invoke<Commit[]>("snapshot_history", { dir }),
   /** What would change in the database to make it match the snapshot at `rev`. */

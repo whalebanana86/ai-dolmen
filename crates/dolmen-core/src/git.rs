@@ -8,8 +8,8 @@ use std::process::{Command, Output, Stdio};
 
 use serde::Serialize;
 
-use crate::Error;
 use crate::snapshot::{MODEL_FILE, Snapshot};
+use crate::{Error, Refusal};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Repository {
@@ -23,6 +23,9 @@ pub struct Repository {
     /// Commits on the upstream the branch doesn't have yet, as of the last fetch.
     pub behind: u32,
     pub remotes: Vec<String>,
+    /// Local branches, then remote branches that have no local branch of the
+    /// same name, which [`switch_branch`] can check out.
+    pub branches: Vec<String>,
 }
 
 /// The repository containing `path`, which may not exist yet.
@@ -63,7 +66,85 @@ pub fn repository(path: &Path) -> Result<Option<Repository>, Error> {
         ahead,
         behind,
         remotes: remotes(dir)?,
+        branches: branches(dir)?,
     }))
+}
+
+fn branches(dir: &Path) -> Result<Vec<String>, Error> {
+    let refs = stdout(&run(
+        dir,
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?);
+    let mut local = Vec::new();
+    let mut remote = Vec::new();
+    for name in refs.lines() {
+        if let Some(branch) = name.strip_prefix("refs/heads/") {
+            local.push(branch.to_owned());
+        } else if let Some((_, branch)) = name
+            .strip_prefix("refs/remotes/")
+            .and_then(|r| r.split_once('/'))
+            && branch != "HEAD"
+        {
+            remote.push(branch.to_owned());
+        }
+    }
+    for branch in remote {
+        if !local.contains(&branch) {
+            local.push(branch);
+        }
+    }
+    Ok(local)
+}
+
+/// Creates branch `name` at the current commit and checks it out. The files
+/// stay as they are, so the database still matches them.
+pub fn create_branch(dir: &Path, name: &str) -> Result<(), Error> {
+    let dir = existing(dir)?;
+    check_branch_name(dir, name)?;
+    run(dir, &["switch", "--quiet", "--create", name])?;
+    Ok(())
+}
+
+/// Checks out branch `name`, creating it from the remote branch of that name
+/// when there's no local one. Refuses while the snapshot folder `dir` has
+/// changes that aren't committed: they would be carried to the other branch
+/// and mixed into its snapshot.
+pub fn switch_branch(dir: &Path, name: &str) -> Result<(), Error> {
+    let root = existing(dir)?;
+    check_branch_name(root, name)?;
+    let pathspec = dir.to_string_lossy();
+    if !stdout(&run(root, &["status", "--porcelain", "--", &pathspec])?).is_empty() {
+        return Err(Error::Refused {
+            reason: Refusal::UncommittedChanges,
+            message: "The snapshot folder has changes that aren't committed; commit or discard them before switching branches.".into(),
+        });
+    }
+    run(root, &["switch", "--quiet", name])?;
+    Ok(())
+}
+
+fn check_branch_name(dir: &Path, name: &str) -> Result<(), Error> {
+    if name.starts_with('-')
+        || !git(dir, &["check-ref-format", "--branch", name])?
+            .status
+            .success()
+    {
+        return Err(storage(format!("{name:?} isn't a valid branch name")));
+    }
+    Ok(())
+}
+
+/// `path`, or its nearest ancestor that exists, for running Git in a snapshot
+/// folder that hasn't been written yet.
+fn existing(path: &Path) -> Result<&Path, Error> {
+    path.ancestors()
+        .find(|p| p.is_dir())
+        .ok_or_else(|| storage(format!("{} doesn't exist", path.display())))
 }
 
 /// Commits everything under `dir`, and nothing outside it, even if other changes

@@ -31,9 +31,10 @@ live in Git next to your code. In the app, **Snapshot** shows what changed since
 the last snapshot, writes it, and commits and pushes the folder; **History**
 draws the repository's graph and compares any commit or tag with the database.
 
-Snapshots can also go the other way, like checking out code: pick a commit or
-tag in **History**, or check one out with Git and open **Changes**, then
-**Update database** shows the DDL plan that makes a *local* database match it.
+Snapshots can also go the other way, like checking out code: switch branches
+in the snapshot panel, pick a commit or tag in **History**, or check one out
+with Git and open **Changes**, then **Update database** shows the DDL plan that
+makes a *local* database match it.
 The plan runs in one transaction, so it applies completely or not at all. Steps
 that drop data or change column types stay blocked until you allow them, and
 drops that look like renames can be applied as renames to keep the data. Each

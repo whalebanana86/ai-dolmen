@@ -38,6 +38,8 @@ pub fn run() {
             pg::pg_disconnect,
             snapshot::snapshot_checkout,
             snapshot::snapshot_ssh_alternatives,
+            snapshot::snapshot_create_branch,
+            snapshot::snapshot_switch_branch,
             snapshot::snapshot_status,
             snapshot::snapshot_save,
             snapshot::snapshot_push,

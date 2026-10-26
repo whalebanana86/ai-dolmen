@@ -158,6 +158,19 @@ pub async fn snapshot_push(dir: String) -> Result<(), Error> {
     git::push(&PathBuf::from(dir))
 }
 
+/// Creates a branch at the current commit and checks it out.
+#[tauri::command]
+pub async fn snapshot_create_branch(dir: String, name: String) -> Result<(), Error> {
+    git::create_branch(Path::new(&dir), name.trim())
+}
+
+/// Checks out another branch. The app then offers to make the database match
+/// the branch's snapshot, the way a checkout changes code.
+#[tauri::command]
+pub async fn snapshot_switch_branch(dir: String, name: String) -> Result<(), Error> {
+    git::switch_branch(Path::new(&dir), &name)
+}
+
 /// Recent commits of the repository holding `dir`, for the history graph.
 #[tauri::command]
 pub async fn snapshot_history(dir: String) -> Result<Vec<Commit>, Error> {

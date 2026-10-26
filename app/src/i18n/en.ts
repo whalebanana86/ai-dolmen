@@ -27,6 +27,8 @@ export const en = {
       noModel:
         "This snapshot has no dolmen-model.json, so it can't be applied: it was written before Dolmen saved models. Write and commit a new snapshot to apply it later.",
       badSnapshotPath: "The snapshot folder must be a path inside the repository, such as db/schema.",
+      uncommittedChanges:
+        "The snapshot folder has changes that aren't committed. Commit or discard them before switching branches.",
     },
   },
 
@@ -135,6 +137,20 @@ export const en = {
     sshHint:
       "SSH to this host uses your default key, which may belong to another GitHub account. An alias in ~/.ssh/config picks the account by its key:",
     useAddress: (url: string) => `Use ${url}`,
+
+    branches: {
+      branch: "Branch",
+      detached: "(no branch)",
+      newBranch: "New branch",
+      namePlaceholder: "feature/widen-names",
+      create: "Create",
+      created: (name: string) => `Created branch ${name}`,
+      switched: (name: string) => `Switched to ${name}`,
+      label: (name: string) => `branch ${name}`,
+      unsaved: (n: number, name: string) =>
+        `The database has ${plural(n, "change", "changes")} not in the snapshot. Switching to ${name} and updating the database to match it would undo them.`,
+      switchAnyway: "Switch anyway",
+    },
 
     location: {
       intro:

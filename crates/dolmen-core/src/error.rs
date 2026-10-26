@@ -53,6 +53,8 @@ pub enum Refusal {
     NoModel,
     /// A snapshot folder path inside a repository isn't a plain relative path.
     BadSnapshotPath,
+    /// Switching branches would carry the snapshot folder's uncommitted changes along.
+    UncommittedChanges,
 }
 
 impl From<keyring_core::Error> for Error {
