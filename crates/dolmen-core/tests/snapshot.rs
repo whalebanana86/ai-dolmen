@@ -12,7 +12,7 @@ use tempfile::TempDir;
 
 #[macro_use]
 mod common;
-use common::test_config;
+use common::{exclusive, test_config};
 
 fn column(name: &str, data_type: &str) -> Column {
     Column {
@@ -332,6 +332,7 @@ fn schema_named<'a>(database: &'a Database, name: &str) -> &'a Schema {
 #[tokio::test]
 async fn snapshot_files_recreate_the_same_schema() {
     let config = config_or_skip!();
+    let _exclusive = exclusive().await;
     let session = Session::connect(&config).await.expect("connect");
     session
         .execute(
@@ -429,6 +430,7 @@ fn files_of(snapshot: &Snapshot, schema: &str) -> Vec<(String, String)> {
 #[tokio::test]
 async fn snapshots_ignore_the_sessions_search_path() {
     let config = config_or_skip!();
+    let _exclusive = exclusive().await;
     let session = Session::connect(&config).await.expect("connect");
     session
         .execute(

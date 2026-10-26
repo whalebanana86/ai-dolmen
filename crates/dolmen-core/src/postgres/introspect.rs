@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use tokio_postgres::Client;
+use tokio_postgres::GenericClient;
 
 use crate::Error;
 use crate::schema::{
@@ -31,7 +31,7 @@ enum Relation {
     View { schema: usize, view: usize },
 }
 
-pub(super) async fn introspect(client: &Client) -> Result<Database, Error> {
+pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, Error> {
     let mut schemas: Vec<Schema> = client
         .query(
             &format!(

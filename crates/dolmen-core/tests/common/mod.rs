@@ -33,3 +33,11 @@ macro_rules! config_or_skip {
         }
     };
 }
+
+/// Held by tests that change shared schemas or read the whole database's
+/// structure, so they don't run at the same time: reading definitions while
+/// another test drops objects fails with "could not open relation".
+pub async fn exclusive() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    LOCK.lock().await
+}

@@ -19,6 +19,7 @@ pub mod ddl;
 mod introspect;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const INTROSPECTION_ATTEMPTS: u64 = 5;
 
 /// How to connect to a PostgreSQL server.
 #[derive(Clone, Deserialize)]
@@ -267,7 +268,48 @@ impl Session {
                     .0,
             );
         }
-        introspect::introspect(metadata.as_ref().expect("opened above")).await
+        let client = metadata.as_mut().expect("opened above");
+
+        // One read-only snapshot makes all catalog queries agree. DDL running at
+        // the same time can still drop an object between reading the catalogs and
+        // asking for its definition ("could not open relation", internal error
+        // XX000), so try again a few times, waiting a little longer each time.
+        let mut attempt = 1;
+        loop {
+            let transaction = client
+                .build_transaction()
+                .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+                .read_only(true)
+                .start()
+                .await?;
+            match introspect::introspect(&transaction).await {
+                Err(Error::Database { code, .. })
+                    if code == "XX000" && attempt < INTROSPECTION_ATTEMPTS =>
+                {
+                    drop(transaction);
+                    tokio::time::sleep(Duration::from_millis(50 * attempt)).await;
+                    attempt += 1;
+                }
+                Err(Error::Database {
+                    message,
+                    code,
+                    detail,
+                    hint,
+                    position,
+                }) if code == "XX000" => {
+                    return Err(Error::Database {
+                        message: format!(
+                            "The schema kept changing while it was read; try again. ({message})"
+                        ),
+                        code,
+                        detail,
+                        hint,
+                        position,
+                    });
+                }
+                result => return result,
+            }
+        }
     }
 
     /// The schema unqualified names resolve to first, usually `public`.

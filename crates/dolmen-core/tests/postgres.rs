@@ -12,7 +12,7 @@ use dolmen_core::schema::{Column, ConstraintKind, FunctionKind, Generated, Ident
 
 #[macro_use]
 mod common;
-use common::test_config;
+use common::{exclusive, test_config};
 
 async fn connect(config: &ConnectConfig) -> Session {
     Session::connect(config).await.expect("connect")
@@ -155,7 +155,18 @@ async fn cancels_a_running_statement() {
         async move { session.execute("SELECT pg_sleep(30)", 1000).await }
     });
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Cancel only once the server runs the statement; a cancel that arrives
+    // first is ignored, and the statement would then run its full 30 seconds.
+    let observer = connect(&config).await;
+    let running_now = "SELECT count(*) FROM pg_stat_activity \
+                       WHERE query = 'SELECT pg_sleep(30)' AND state = 'active'";
+    for _ in 0..100 {
+        let count = rows(&execute(&observer, running_now).await[0]).1[0][0].clone();
+        if count.as_deref() != Some("0") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     session.cancel().await.expect("cancel");
 
     let result = tokio::time::timeout(Duration::from_secs(5), running)
@@ -185,6 +196,7 @@ async fn rejects_a_wrong_password() {
 #[tokio::test]
 async fn introspects_the_database_structure() {
     let config = config_or_skip!();
+    let _exclusive = exclusive().await;
     let session = connect(&config).await;
     execute(
         &session,
