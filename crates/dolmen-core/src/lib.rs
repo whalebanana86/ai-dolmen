@@ -2,6 +2,7 @@
 //!
 //! Shared by the desktop app (`dolmen-app`) and the command-line tool (`dolmen`).
 
+pub mod ai;
 pub mod connections;
 mod error;
 pub mod git;
@@ -10,7 +11,7 @@ pub mod schema;
 pub mod snapshot;
 pub mod sql;
 
-pub use error::{Error, Refusal};
+pub use error::{AiFailure, Error, Refusal};
 
 /// Dolmen version, shared by the app and the CLI.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

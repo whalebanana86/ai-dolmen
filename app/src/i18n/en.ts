@@ -30,6 +30,15 @@ export const en = {
       uncommittedChanges:
         "The snapshot folder has changes that aren't committed. Commit or discard them before switching branches.",
     },
+    ai: {
+      noApiKey: "There's no Anthropic API key yet. Add one in Settings (⚙) to use AI.",
+      badApiKey: "The Anthropic API didn't accept the API key. Check it in Settings (⚙).",
+      rateLimited: "Too many requests for this API key's limits. Try again in a moment.",
+      unavailable: "The Anthropic API is busy or having trouble. Try again in a moment.",
+      declined: "The Anthropic API's safety checks declined this request.",
+      cancelled: "Stopped.",
+      network: (message: string) => `Couldn't reach the Anthropic API: ${message}`,
+    },
   },
 
   settings: {
@@ -37,6 +46,25 @@ export const en = {
     language: "Language",
     theme: "Theme",
     themes: { system: "Match the system", light: "Light", dark: "Dark" },
+    ai: {
+      title: "AI",
+      model: "Model",
+      models: {
+        "claude-opus-5-5": "Claude Opus 5.5: most accurate (default)",
+        "claude-sonnet-5-5": "Claude Sonnet 5.5: faster and cheaper",
+        "claude-haiku-5-5": "Claude Haiku 5.5: fastest and cheapest",
+      },
+      apiKey: "Anthropic API key",
+      keySaved: "Saved in the OS keychain.",
+      keyFromEnvironment: "Using the key in ANTHROPIC_API_KEY. A saved key takes its place.",
+      keyPlaceholder: "sk-ant-…",
+      saveKey: "Save key",
+      forgetKey: "Remove key",
+      keyHelp:
+        "Use your own key from the Anthropic Console; Anthropic bills it for what you use. Dolmen keeps it in the OS keychain and sends it only to the Anthropic API.",
+      privacy:
+        "AI requests send the database's structure (tables, columns, comments), the SQL you ask about and its error messages to Anthropic. Dolmen doesn't read table rows for AI, but values written in the SQL or in an error message go along.",
+    },
   },
 
   connect: {
@@ -113,6 +141,28 @@ export const en = {
       copyDefinition: "Copy definition",
       showCurrentValue: "Show current value",
     },
+  },
+
+  ai: {
+    button: "AI",
+    buttonTitle: "Ask AI (⌘K)",
+    placeholder: "What do you need? For example: sign-ups per day last month",
+    generate: "Write SQL",
+    explain: "Explain SQL",
+    explainTitle: "Explain the selected SQL, or the statement at the cursor",
+    fix: "Fix with AI",
+    thinking: "Thinking…",
+    stop: "Stop",
+    insert: "Insert into editor",
+    replace: "Replace the failed statement",
+    asked: {
+      generate: (request: string) => `“${request}”`,
+      explain: "Explaining the SQL",
+      fix: "Fixing the failed statement",
+    },
+    cutOff: "The answer was cut off because it got too long.",
+    neverRuns: "Dolmen never runs SQL from AI on its own. Review it, then run it yourself.",
+    openSettings: "Open settings",
   },
 
   snapshot: {

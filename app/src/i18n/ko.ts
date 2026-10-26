@@ -27,6 +27,15 @@ export const ko: Messages = {
       badSnapshotPath: "스냅샷 폴더는 db/schema처럼 저장소 안의 경로여야 합니다.",
       uncommittedChanges: "스냅샷 폴더에 커밋하지 않은 변경이 있습니다. 커밋하거나 되돌린 뒤 브랜치를 바꿔 주세요.",
     },
+    ai: {
+      noApiKey: "아직 Anthropic API 키가 없습니다. AI를 쓰려면 설정(⚙)에서 키를 추가해 주세요.",
+      badApiKey: "Anthropic API가 API 키를 받아들이지 않았습니다. 설정(⚙)에서 키를 확인해 주세요.",
+      rateLimited: "이 API 키의 요청 한도를 넘었습니다. 잠시 후 다시 시도해 주세요.",
+      unavailable: "Anthropic API가 바쁘거나 문제가 있습니다. 잠시 후 다시 시도해 주세요.",
+      declined: "Anthropic API의 안전 검사가 이 요청을 거절했습니다.",
+      cancelled: "멈췄습니다.",
+      network: (message) => `Anthropic API에 연결하지 못했습니다: ${message}`,
+    },
   },
 
   settings: {
@@ -34,6 +43,25 @@ export const ko: Messages = {
     language: "언어",
     theme: "테마",
     themes: { system: "시스템 설정 따르기", light: "밝게", dark: "어둡게" },
+    ai: {
+      title: "AI",
+      model: "모델",
+      models: {
+        "claude-opus-5-5": "Claude Opus 5.5: 가장 정확함 (기본)",
+        "claude-sonnet-5-5": "Claude Sonnet 5.5: 더 빠르고 저렴함",
+        "claude-haiku-5-5": "Claude Haiku 5.5: 가장 빠르고 저렴함",
+      },
+      apiKey: "Anthropic API 키",
+      keySaved: "OS 키체인에 저장되어 있습니다.",
+      keyFromEnvironment: "ANTHROPIC_API_KEY 환경 변수의 키를 쓰고 있습니다. 키를 저장하면 그 키를 대신 씁니다.",
+      keyPlaceholder: "sk-ant-…",
+      saveKey: "키 저장",
+      forgetKey: "키 지우기",
+      keyHelp:
+        "Anthropic Console에서 만든 본인의 키를 씁니다. 사용한 만큼 Anthropic이 청구합니다. Dolmen은 키를 OS 키체인에 두고 Anthropic API에만 보냅니다.",
+      privacy:
+        "AI 요청에는 데이터베이스 구조(테이블, 컬럼, 주석), 물어본 SQL과 그 오류 메시지가 담겨 Anthropic으로 전송됩니다. Dolmen이 AI를 위해 테이블의 행을 읽지는 않지만, SQL이나 오류 메시지 안에 적힌 값은 함께 전송됩니다.",
+    },
   },
 
   connect: {
@@ -107,6 +135,28 @@ export const ko: Messages = {
       copyDefinition: "정의 복사",
       showCurrentValue: "현재 값 보기",
     },
+  },
+
+  ai: {
+    button: "AI",
+    buttonTitle: "AI에게 묻기 (⌘K)",
+    placeholder: "무엇이 필요하세요? 예: 지난달 일별 가입자 수",
+    generate: "SQL 만들기",
+    explain: "SQL 설명",
+    explainTitle: "선택한 SQL이나 커서가 있는 문장을 설명합니다",
+    fix: "AI로 고치기",
+    thinking: "생각하는 중…",
+    stop: "멈추기",
+    insert: "편집기에 넣기",
+    replace: "실패한 문장 바꾸기",
+    asked: {
+      generate: (request) => `“${request}”`,
+      explain: "SQL 설명",
+      fix: "실패한 문장 고치기",
+    },
+    cutOff: "답이 너무 길어 중간에 끊겼습니다.",
+    neverRuns: "AI가 쓴 SQL은 Dolmen이 스스로 실행하지 않습니다. 확인한 뒤 직접 실행하세요.",
+    openSettings: "설정 열기",
   },
 
   snapshot: {

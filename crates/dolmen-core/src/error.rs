@@ -35,6 +35,31 @@ pub enum Error {
     /// that isn't local. The reason lets the app word it in the user's language.
     #[error("{message}")]
     Refused { reason: Refusal, message: String },
+    /// Asking the AI failed. The reason lets the app word it in the user's language.
+    #[error("{message}")]
+    Ai { reason: AiFailure, message: String },
+}
+
+/// Why asking the AI failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AiFailure {
+    /// No API key is saved, and `ANTHROPIC_API_KEY` isn't set.
+    NoApiKey,
+    /// The API didn't accept the key.
+    BadApiKey,
+    /// Too many requests for the account's rate limits.
+    RateLimited,
+    /// The API is overloaded or failing.
+    Unavailable,
+    /// The API's safety checks declined the request.
+    Declined,
+    /// The API couldn't be reached, or the connection broke.
+    Network,
+    /// The user stopped the answer.
+    Cancelled,
+    /// Anything else the API rejected; the message says what.
+    Other,
 }
 
 /// Why an action was refused.

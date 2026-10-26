@@ -12,15 +12,18 @@ import {
   connections,
   errorMessage,
   isAppError,
+  AiTask,
   pg,
   snapshots,
   sqlText,
 } from "./api";
+import { AiPanel, FixTarget, useAi } from "./AiPanel";
 import { ResultView } from "./ResultView";
 import { SchemaTree } from "./SchemaTree";
 import { SettingsButton, SettingsDialog } from "./SettingsDialog";
 import { SnapshotPanel } from "./SnapshotPanel";
 import { SqlEditor } from "./SqlEditor";
+import type { Messages } from "./i18n/en";
 import { useT } from "./settings";
 
 const INITIAL_SQL = "SELECT version();\n";
@@ -35,8 +38,8 @@ interface Outcome {
   runId: number;
   /** Results of the statements that succeeded, in order. */
   results: StatementResult[];
-  /** The error that stopped the run, if any. */
-  failure: { error: unknown; location: Location | null } | null;
+  /** The error that stopped the run, if any, and the statement that failed. */
+  failure: { error: unknown; location: Location | null; statement: FixTarget } | null;
   statementCount: number;
   firstLine: number;
   elapsedMs: number;
@@ -65,6 +68,8 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const runCount = useRef(0);
+  const { conversation, ask, stop: stopAi, clear: clearAi } = useAi(session.id);
+  const [aiPrompting, setAiPrompting] = useState(false);
 
   const refreshSchema = useCallback(() => {
     setLoadingSchema(true);
@@ -176,7 +181,11 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       try {
         results.push(...(await pg.execute(session.id, statement)));
       } catch (error) {
-        failure = { error, location: errorLocation(sql, range.start, statement, error) };
+        failure = {
+          error,
+          location: errorLocation(sql, range.start, statement, error),
+          statement: { statement, start: range.start, end: range.end },
+        };
         break;
       }
     }
@@ -219,6 +228,49 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     if (runIt) run();
   }
 
+  /** The selected text, or the statement at the cursor. */
+  async function editorSql() {
+    const view = viewRef.current;
+    if (!view) return null;
+    const sql = view.state.doc.toString();
+    const { from, to } = view.state.selection.main;
+    if (from !== to) return sql.slice(from, to);
+    const range = await sqlText.statementAt(sql, from);
+    return range ? sql.slice(range.start, range.end) : null;
+  }
+
+  async function askAi(task: (sql: string | null) => AiTask | null) {
+    const asked = task(await editorSql());
+    if (asked) ask(asked);
+  }
+
+  function fixWithAi(failure: NonNullable<Outcome["failure"]>) {
+    setAiPrompting(false);
+    ask({ kind: "fix", sql: failure.statement.statement, error: describeError(failure.error, t) }, failure.statement);
+  }
+
+  /** Puts a fix where the failed statement was, if the editor still has it there. */
+  function replaceStatement(sql: string, target: FixTarget) {
+    const view = viewRef.current;
+    if (!view) return;
+    if (view.state.sliceDoc(target.start, target.end) !== target.statement) {
+      insertStatement(sql, false);
+      return;
+    }
+    view.dispatch({
+      changes: { from: target.start, to: target.end, insert: sql },
+      selection: { anchor: target.start },
+      scrollIntoView: true,
+    });
+    view.focus();
+  }
+
+  function closeAi() {
+    clearAi();
+    setAiPrompting(false);
+    viewRef.current?.focus();
+  }
+
   function cancel() {
     // The running statement fails with query_canceled, which stops the run.
     pg.cancel(session.id).catch((error) => console.error("cancel failed", error));
@@ -247,6 +299,9 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             {t.workspace.run}
           </button>
         )}
+        <button onClick={() => setAiPrompting(true)} title={t.ai.buttonTitle}>
+          {t.ai.button}
+        </button>
         <button onClick={() => setSnapshotOpen(true)} title={t.workspace.snapshotTitle}>
           {t.workspace.snapshot}
           {snapshotStatus && (
@@ -270,9 +325,24 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             initialValue={INITIAL_SQL}
             introspection={introspection}
             onRun={run}
+            onAsk={() => setAiPrompting(true)}
             onChange={(value) => setHasText(value.trim() !== "")}
             viewRef={viewRef}
           />
+
+          {(aiPrompting || conversation) && (
+            <AiPanel
+              conversation={conversation}
+              prompting={aiPrompting}
+              onGenerate={(request) => askAi((context) => ({ kind: "generate", request, context }))}
+              onExplain={() => askAi((sql) => (sql?.trim() ? { kind: "explain", sql } : null))}
+              onStop={stopAi}
+              onClose={closeAi}
+              onInsert={(sql) => insertStatement(sql, false)}
+              onReplace={replaceStatement}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          )}
 
           <section className="results">
             {running && <p className="muted status">{t.workspace.running}</p>}
@@ -289,7 +359,9 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                 {outcome.results.map((result, index) => (
                   <ResultView key={`${outcome.runId}-${index}`} index={index} result={result} />
                 ))}
-                {outcome.failure && <ErrorView {...outcome.failure} />}
+                {outcome.failure && (
+                  <ErrorView {...outcome.failure} onFix={() => fixWithAi(outcome.failure!)} />
+                )}
               </>
             )}
           </section>
@@ -332,7 +404,15 @@ async function statementsToRun(sql: string, selectionStart: number, selectionEnd
   );
 }
 
-function ErrorView({ error, location }: { error: unknown; location: Location | null }) {
+function ErrorView({
+  error,
+  location,
+  onFix,
+}: {
+  error: unknown;
+  location: Location | null;
+  onFix: () => void;
+}) {
   const t = useT();
   const db = isAppError(error) && error.kind === "database" ? error : null;
 
@@ -353,8 +433,28 @@ function ErrorView({ error, location }: { error: unknown; location: Location | n
           {t.workspace.hint} {db.hint}
         </p>
       )}
+      {/* Only the server's errors are about the SQL; connection problems aren't. */}
+      {db && db.code !== "57014" && (
+        <div className="actions">
+          <button onClick={onFix}>{t.ai.fix}</button>
+        </div>
+      )}
     </div>
   );
+}
+
+/** The error as the server reported it, for the AI to fix the statement. */
+function describeError(error: unknown, t: Messages) {
+  if (!isAppError(error) || error.kind !== "database") return errorMessage(error, t);
+  return [
+    error.message,
+    `SQLSTATE ${error.code}`,
+    error.detail && `DETAIL: ${error.detail}`,
+    error.hint && `HINT: ${error.hint}`,
+    error.position && `POSITION: character ${error.position} of the statement`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function lineAt(text: string, index: number) {

@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
+import { AI_MODELS, AiModel, ai, errorMessage } from "./api";
 import { LOCALES, Locale, Theme, useSettings, useT } from "./settings";
 
 const THEMES: Theme[] = ["system", "light", "dark"];
 
-/** App settings: language and theme. Changes apply right away. */
+/** App settings: language, theme and AI. Changes apply right away. */
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
   const { settings, update } = useSettings();
@@ -42,9 +44,94 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </label>
             ))}
           </fieldset>
+          <AiSettings />
         </div>
       </div>
     </div>
+  );
+}
+
+/** The model, and the API key, which goes to the keychain and never comes back. */
+function AiSettings() {
+  const t = useT();
+  const { settings, update } = useSettings();
+  const [status, setStatus] = useState<{ saved: boolean; fromEnvironment: boolean } | null>(null);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    ai.keyStatus()
+      .then(setStatus)
+      .catch((err) => setError(errorMessage(err, t)));
+  }, []);
+
+  async function change(action: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      setKey("");
+      setStatus(await ai.keyStatus());
+    } catch (err) {
+      setError(errorMessage(err, t));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <fieldset className="field ai-settings">
+      <legend>{t.settings.ai.title}</legend>
+      <label className="field">
+        {t.settings.ai.model}
+        <select value={settings.aiModel} onChange={(e) => update({ aiModel: e.target.value as AiModel })}>
+          {AI_MODELS.map((model) => (
+            <option key={model} value={model}>
+              {t.settings.ai.models[model]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="field">
+        {t.settings.ai.apiKey}
+        {status?.saved ? (
+          <div className="key-row">
+            <span className="muted">{t.settings.ai.keySaved}</span>
+            <span className="spacer" />
+            <button onClick={() => change(ai.forgetKey)} disabled={busy}>
+              {t.settings.ai.forgetKey}
+            </button>
+          </div>
+        ) : (
+          <form
+            className="key-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              change(() => ai.setKey(key));
+            }}
+          >
+            <input
+              type="password"
+              value={key}
+              placeholder={t.settings.ai.keyPlaceholder}
+              onChange={(e) => setKey(e.target.value)}
+              autoComplete="off"
+              aria-label={t.settings.ai.apiKey}
+            />
+            <button type="submit" disabled={busy || !key.trim()}>
+              {t.settings.ai.saveKey}
+            </button>
+          </form>
+        )}
+        {status && !status.saved && status.fromEnvironment && (
+          <span className="muted">{t.settings.ai.keyFromEnvironment}</span>
+        )}
+        {error && <span className="error-text">{error}</span>}
+      </div>
+      <p className="muted">{t.settings.ai.keyHelp}</p>
+      <p className="muted">{t.settings.ai.privacy}</p>
+    </fieldset>
   );
 }
 

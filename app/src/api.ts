@@ -1,6 +1,6 @@
 // Typed wrappers around the Tauri commands in src-tauri/src/lib.rs.
 // The shapes mirror dolmen-core and are pinned by crates/dolmen-core/tests/wire_format.rs.
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type { Messages } from "./i18n/en";
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
@@ -129,7 +129,8 @@ export type AppError =
   | { kind: "connection"; message: string }
   | { kind: "closed" }
   | { kind: "storage"; message: string }
-  | { kind: "refused"; reason: Refusal; message: string };
+  | { kind: "refused"; reason: Refusal; message: string }
+  | { kind: "ai"; reason: AiFailure; message: string };
 
 /** Why the backend refused an action; the UI words each in the user's language. */
 export type Refusal =
@@ -140,6 +141,48 @@ export type Refusal =
   | "noModel"
   | "badSnapshotPath"
   | "uncommittedChanges";
+
+/** Why asking the AI failed. */
+export type AiFailure =
+  | "noApiKey"
+  | "badApiKey"
+  | "rateLimited"
+  | "unavailable"
+  | "declined"
+  | "network"
+  | "cancelled"
+  | "other";
+
+/** The models to choose from, the default first. */
+export const AI_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] as const;
+export type AiModel = (typeof AI_MODELS)[number];
+
+export type AiTask =
+  | {
+      kind: "generate";
+      request: string;
+      /** The selected text or the statement at the cursor, which the request may be about. */
+      context: string | null;
+    }
+  | { kind: "explain"; sql: string }
+  | { kind: "fix"; sql: string; error: string };
+
+export interface AiQuestion {
+  /** Chosen by the UI, to stop the answer with `ai.cancel`. */
+  id: number;
+  sessionId: number;
+  model: AiModel;
+  /** The language to answer in, e.g. "Korean". */
+  language: string;
+  task: AiTask;
+}
+
+export interface AiAnswer {
+  /** The model that wrote it; another one when the API fell back. */
+  model: string;
+  /** "end_turn", or "max_tokens" when the answer was cut off. */
+  stopReason: string | null;
+}
 
 export function appVersion() {
   return invoke<string>("app_version");
@@ -306,6 +349,22 @@ export const snapshots = {
     invoke<string>("ddl_create_statement", { schema, object }),
 };
 
+export const ai = {
+  /** Whether an API key is saved in the keychain, or set in ANTHROPIC_API_KEY. */
+  keyStatus: () => invoke<{ saved: boolean; fromEnvironment: boolean }>("ai_key_status"),
+  /** Saves the API key in the OS keychain. It never comes back to the UI. */
+  setKey: (key: string) => invoke<void>("ai_key_set", { key }),
+  forgetKey: () => invoke<void>("ai_key_forget"),
+  /** Asks about a task, calling `onText` with each piece of the answer as it arrives. */
+  ask: (question: AiQuestion, onText: (text: string) => void) => {
+    const channel = new Channel<string>();
+    channel.onmessage = onText;
+    return invoke<AiAnswer>("ai_ask", { question, onText: channel });
+  },
+  /** Stops the answer to question `id`; `ask` then fails with reason "cancelled". */
+  cancel: (id: number) => invoke<void>("ai_cancel", { id }),
+};
+
 /** A range in editor text, in UTF-16 code units like JavaScript string indices. */
 export interface TextRange {
   start: number;
@@ -332,6 +391,15 @@ export function errorMessage(error: unknown, t: Messages): string {
       return t.errors.closed;
     case "refused":
       return t.errors.refused[error.reason] ?? error.message;
+    case "ai":
+      switch (error.reason) {
+        case "other":
+          return error.message;
+        case "network":
+          return t.errors.ai.network(error.message);
+        default:
+          return t.errors.ai[error.reason];
+      }
     default:
       return error.message;
   }

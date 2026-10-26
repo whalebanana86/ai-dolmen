@@ -1,5 +1,6 @@
 import { ReactNode, createContext, useContext, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { AI_MODELS, AiModel } from "./api";
 import { Messages, en } from "./i18n/en";
 import { ko } from "./i18n/ko";
 
@@ -9,6 +10,7 @@ export type Theme = "system" | "light" | "dark";
 export interface Settings {
   locale: Locale;
   theme: Theme;
+  aiModel: AiModel;
 }
 
 /** Each language's name in that language, for the picker. */
@@ -17,8 +19,11 @@ export const LOCALES: { value: Locale; name: string }[] = [
   { value: "en", name: "English" },
 ];
 
+/** Each language's English name, for asking the AI to answer in it. */
+export const LANGUAGE_NAMES: Record<Locale, string> = { ko: "Korean", en: "English" };
+
 const CATALOGS: Record<Locale, Messages> = { ko, en };
-const DEFAULTS: Settings = { locale: "ko", theme: "system" };
+const DEFAULTS: Settings = { locale: "ko", theme: "system", aiModel: AI_MODELS[0] };
 const STORAGE_KEY = "dolmen.settings";
 
 interface SettingsValue {
@@ -77,6 +82,7 @@ function load(): Settings {
     return {
       locale: LOCALES.some((l) => l.value === stored.locale) ? stored.locale : DEFAULTS.locale,
       theme: ["system", "light", "dark"].includes(stored.theme) ? stored.theme : DEFAULTS.theme,
+      aiModel: AI_MODELS.includes(stored.aiModel) ? stored.aiModel : DEFAULTS.aiModel,
     };
   } catch {
     return DEFAULTS;

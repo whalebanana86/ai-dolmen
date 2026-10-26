@@ -13,20 +13,22 @@ interface Props {
   /** The database structure, for completing tables and columns; null until loaded. */
   introspection: Introspection | null;
   onRun: () => void;
+  /** ⌘K: ask AI. */
+  onAsk: () => void;
   onChange: (value: string) => void;
   /** Set to the editor view, so the parent can read text and selection when running. */
   viewRef: { current: EditorView | null };
 }
 
-export function SqlEditor({ initialValue, introspection, onRun, onChange, viewRef }: Props) {
+export function SqlEditor({ initialValue, introspection, onRun, onAsk, onChange, viewRef }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const t = useT();
   const [language] = useState(() => new Compartment());
   const [phrases] = useState(() => new Compartment());
   // The view is created once, so it reads the latest callbacks through a ref.
-  const handlers = useRef({ onRun, onChange });
+  const handlers = useRef({ onRun, onAsk, onChange });
   useEffect(() => {
-    handlers.current = { onRun, onChange };
+    handlers.current = { onRun, onAsk, onChange };
   });
 
   useEffect(() => {
@@ -41,6 +43,13 @@ export function SqlEditor({ initialValue, introspection, onRun, onChange, viewRe
                 key: "Mod-Enter",
                 run: () => {
                   handlers.current.onRun();
+                  return true;
+                },
+              },
+              {
+                key: "Mod-k",
+                run: () => {
+                  handlers.current.onAsk();
                   return true;
                 },
               },

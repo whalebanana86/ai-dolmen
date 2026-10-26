@@ -218,3 +218,67 @@ fn plans_and_renames_use_camel_case_and_kind_tags() {
         json!({ "kind": "enumValuesRemoved", "name": "app.mood" })
     );
 }
+
+#[test]
+fn ai_tasks_answers_and_errors_match_the_app() {
+    use dolmen_core::AiFailure;
+    use dolmen_core::ai::{Answer, KeyStatus, Task};
+
+    let tasks: Vec<Task> = serde_json::from_value(json!([
+        { "kind": "generate", "request": "sign-ups per day", "context": null },
+        { "kind": "explain", "sql": "SELECT 1" },
+        { "kind": "fix", "sql": "SELEC 1", "error": "syntax error" },
+    ]))
+    .unwrap();
+    assert_eq!(
+        tasks,
+        [
+            Task::Generate {
+                request: "sign-ups per day".into(),
+                context: None
+            },
+            Task::Explain {
+                sql: "SELECT 1".into()
+            },
+            Task::Fix {
+                sql: "SELEC 1".into(),
+                error: "syntax error".into()
+            },
+        ]
+    );
+    assert_eq!(
+        serde_json::to_value(Answer {
+            model: "claude-opus-5-5".into(),
+            stop_reason: Some("end_turn".into()),
+        })
+        .unwrap(),
+        json!({ "model": "claude-opus-5-5", "stopReason": "end_turn" })
+    );
+    assert_eq!(
+        serde_json::to_value(KeyStatus {
+            saved: true,
+            from_environment: false,
+        })
+        .unwrap(),
+        json!({ "saved": true, "fromEnvironment": false })
+    );
+    for (reason, name) in [
+        (AiFailure::NoApiKey, "noApiKey"),
+        (AiFailure::BadApiKey, "badApiKey"),
+        (AiFailure::RateLimited, "rateLimited"),
+        (AiFailure::Unavailable, "unavailable"),
+        (AiFailure::Declined, "declined"),
+        (AiFailure::Network, "network"),
+        (AiFailure::Cancelled, "cancelled"),
+        (AiFailure::Other, "other"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(Error::Ai {
+                reason,
+                message: "m".into()
+            })
+            .unwrap(),
+            json!({ "kind": "ai", "reason": name, "message": "m" })
+        );
+    }
+}

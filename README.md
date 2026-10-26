@@ -60,6 +60,21 @@ on errors. `--url` falls back to `DATABASE_URL`, and the password to `PGPASSWORD
     DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```
 
+## AI
+
+Press **AI** (⌘K) in the editor to ask Claude to write SQL for a request in
+plain language, or to explain the selected SQL. When a statement fails, **Fix
+with AI** proposes a corrected one that can replace it. Requests carry the
+database's structure as the schema snapshot's DDL, with its comments, so
+answers use your real tables and the meaning you wrote down for them.
+
+Bring your own [Anthropic API key](https://platform.claude.com/): add it in
+Settings (⚙), where it goes to the OS keychain, or set `ANTHROPIC_API_KEY`.
+Claude Opus 5.5 is the default model; Sonnet 5.5 and Haiku 5.5 are faster and
+cheaper. Dolmen never runs SQL from AI on its own, and it doesn't read table
+rows for AI, but values in the SQL you ask about and in error messages are sent
+along with the schema.
+
 ## Development
 
 Prerequisites:

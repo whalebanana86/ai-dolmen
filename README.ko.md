@@ -58,6 +58,19 @@ dolmen schema check --url postgres://user@host/db --dir db/schema   # 비교
     DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```
 
+## AI
+
+편집기에서 **AI**(⌘K)를 누르면 Claude에게 평범한 말로 요청해 SQL을 받거나, 선택한
+SQL의 설명을 들을 수 있습니다. 문장이 실패하면 **AI로 고치기**가 고친 문장을 제안하고,
+실패한 문장을 그것으로 바꿀 수 있습니다. 요청에는 데이터베이스 구조가 스키마 스냅샷의
+DDL과 주석 그대로 담기므로, 답은 실제 테이블과 주석에 적어 둔 의미를 따릅니다.
+
+본인의 [Anthropic API 키](https://platform.claude.com/)를 씁니다. 설정(⚙)에서 넣으면 OS
+키체인에 저장되고, `ANTHROPIC_API_KEY` 환경 변수도 쓸 수 있습니다. 기본 모델은 Claude
+Opus 5.5이고, Sonnet 5.5와 Haiku 5.5는 더 빠르고 저렴합니다. Dolmen은 AI가 쓴 SQL을
+스스로 실행하지 않고, AI를 위해 테이블의 행을 읽지도 않습니다. 다만 물어본 SQL과 오류
+메시지 안의 값은 스키마와 함께 전송됩니다.
+
 ## 개발
 
 준비물:
