@@ -7,6 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Dolmen contributors"]
+repository = "https://github.com/whalebanana86/ai-dolmen"
 
 [workspace.dependencies]
 dolmen-core = { path = "crates/dolmen-core" }
