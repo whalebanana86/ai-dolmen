@@ -23,6 +23,34 @@
 | MySQL, MariaDB | 계획 (v0.2) |
 | Redis, Valkey | 계획 (v0.3) |
 
+## 스키마 스냅샷
+
+Dolmen은 데이터베이스 구조를 객체 하나당 DDL 파일 하나로 폴더에 씁니다
+(`public/tables/users.sql`, `public/views/…`, `functions/`, `types/`). 그래서 코드
+옆에서 Git으로 관리할 수 있습니다. 앱의 **Snapshot**은 마지막 스냅샷 이후 바뀐 내용을
+보여 주고, 파일을 쓰고, 커밋하고 푸시합니다. **History**는 저장소 그래프를 그리고 아무
+커밋이나 태그를 데이터베이스와 비교합니다.
+
+같은 비교를 명령줄에서도, 예를 들어 CI에서 실행할 수 있습니다.
+
+```sh
+cargo install --git https://github.com/whalebanana86/ai-dolmen dolmen-cli
+
+dolmen schema dump  --url postgres://user@host/db --dir db/schema   # 스냅샷 쓰기
+dolmen schema check --url postgres://user@host/db --dir db/schema   # 비교
+```
+
+`check`는 일치하면 0, 다르면(드리프트) 1, 오류면 2로 끝납니다. `--url`이 없으면
+`DATABASE_URL`을, 비밀번호가 없으면 `PGPASSWORD`를 씁니다.
+
+```yaml
+# .github/workflows/schema.yml
+- name: 운영 DB가 db/schema와 어긋나면 실패
+  run: dolmen schema check --dir db/schema
+  env:
+    DATABASE_URL: ${{ secrets.DATABASE_URL }}
+```
+
 ## 개발
 
 준비물:

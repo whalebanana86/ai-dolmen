@@ -46,6 +46,94 @@ impl fmt::Debug for ConnectConfig {
     }
 }
 
+impl ConnectConfig {
+    /// Reads a libpq connection string, as a URL (`postgres://user:pass@host:5432/db?sslmode=require`)
+    /// or as `key=value` pairs (`host=db user=app dbname=app`). Like libpq, the user
+    /// defaults to the OS user, the database to the user, and the password to `PGPASSWORD`.
+    pub fn parse(conninfo: &str) -> Result<Self, Error> {
+        let invalid = |message: String| Error::Connection {
+            message: format!("invalid connection string: {message}"),
+        };
+        // tokio-postgres only knows disable, prefer and require, so sslmode is read here.
+        let (conninfo, ssl_mode) = take_ssl_mode(conninfo).map_err(invalid)?;
+        let config: tokio_postgres::Config =
+            conninfo.parse().map_err(|err| invalid(format!("{err}")))?;
+
+        let host = match config.get_hosts().first() {
+            Some(tokio_postgres::config::Host::Tcp(host)) => host.clone(),
+            #[cfg(unix)]
+            Some(tokio_postgres::config::Host::Unix(path)) => path.to_string_lossy().into_owned(),
+            None => "localhost".to_owned(),
+        };
+        let user = match config.get_user() {
+            Some(user) => user.to_owned(),
+            None => std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .map_err(|_| invalid("no user given".into()))?,
+        };
+        let password = match config.get_password() {
+            Some(password) => Some(
+                String::from_utf8(password.to_vec())
+                    .map_err(|_| invalid("the password isn't UTF-8".into()))?,
+            ),
+            None => std::env::var("PGPASSWORD").ok(),
+        };
+        Ok(Self {
+            host,
+            port: config.get_ports().first().copied().unwrap_or(5432),
+            database: config.get_dbname().unwrap_or(&user).to_owned(),
+            user,
+            password,
+            ssl_mode,
+        })
+    }
+}
+
+/// Removes `sslmode` from a connection string and returns its mode (`prefer` when absent).
+fn take_ssl_mode(conninfo: &str) -> Result<(String, SslMode), String> {
+    let mut ssl_mode = SslMode::Prefer;
+    let mut read = |value: &str| -> Result<(), String> {
+        ssl_mode = match value {
+            "disable" => SslMode::Disable,
+            "allow" | "prefer" => SslMode::Prefer,
+            "require" => SslMode::Require,
+            "verify-full" => SslMode::VerifyFull,
+            "verify-ca" => {
+                return Err("sslmode=verify-ca isn't supported; use verify-full or require".into());
+            }
+            other => return Err(format!("unknown sslmode {other:?}")),
+        };
+        Ok(())
+    };
+
+    let is_url = conninfo.starts_with("postgres://") || conninfo.starts_with("postgresql://");
+    let rest = if is_url {
+        let (base, query) = conninfo.split_once('?').unwrap_or((conninfo, ""));
+        let mut kept = Vec::new();
+        for param in query.split('&').filter(|p| !p.is_empty()) {
+            match param.strip_prefix("sslmode=") {
+                Some(value) => read(value)?,
+                None => kept.push(param),
+            }
+        }
+        if kept.is_empty() {
+            base.to_owned()
+        } else {
+            format!("{base}?{}", kept.join("&"))
+        }
+    } else {
+        let mut kept = Vec::new();
+        for pair in conninfo.split_whitespace() {
+            match pair.strip_prefix("sslmode=") {
+                Some(value) => read(value)?,
+                None => kept.push(pair),
+            }
+        }
+        kept.join(" ")
+    };
+    Ok((rest, ssl_mode))
+}
+
 /// TLS behaviour, named after libpq's `sslmode` values.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -251,4 +339,50 @@ fn tls_connector(ssl_mode: SslMode) -> Result<MakeTlsConnector, Error> {
             message: err.to_string(),
         })?;
     Ok(MakeTlsConnector::new(connector))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_urls_with_libpq_ssl_modes() {
+        let config =
+            ConnectConfig::parse("postgres://app:s%40cret@db.example.com:6543/shop?sslmode=verify-full&connect_timeout=5")
+                .unwrap();
+        assert_eq!(config.host, "db.example.com");
+        assert_eq!(config.port, 6543);
+        assert_eq!(config.user, "app");
+        assert_eq!(config.password.as_deref(), Some("s@cret"));
+        assert_eq!(config.database, "shop");
+        assert_eq!(config.ssl_mode, SslMode::VerifyFull);
+    }
+
+    #[test]
+    fn parses_key_value_strings() {
+        let config = ConnectConfig::parse(
+            "host=localhost port=55432 user=postgres password=pw sslmode=disable",
+        )
+        .unwrap();
+        assert_eq!((config.host.as_str(), config.port), ("localhost", 55432));
+        // The database defaults to the user, as in libpq.
+        assert_eq!(config.database, "postgres");
+        assert_eq!(config.ssl_mode, SslMode::Disable);
+    }
+
+    #[test]
+    fn rejects_unsupported_ssl_modes() {
+        for conninfo in [
+            "postgres://u@h/d?sslmode=verify-ca",
+            "host=h user=u sslmode=sometimes",
+        ] {
+            assert!(
+                matches!(
+                    ConnectConfig::parse(conninfo),
+                    Err(Error::Connection { .. })
+                ),
+                "{conninfo}"
+            );
+        }
+    }
 }

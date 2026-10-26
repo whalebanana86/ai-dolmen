@@ -23,6 +23,34 @@ A *dolmen* — a "stone table" — is a megalithic monument that has stood for t
 | MySQL, MariaDB | Planned (v0.2) |
 | Redis, Valkey | Planned (v0.3) |
 
+## Schema snapshots
+
+Dolmen writes a database's structure into a folder as one DDL file per object
+(`public/tables/users.sql`, `public/views/…`, `functions/`, `types/`), so it can
+live in Git next to your code. In the app, **Snapshot** shows what changed since
+the last snapshot, writes it, and commits and pushes the folder; **History**
+draws the repository's graph and compares any commit or tag with the database.
+
+The same comparison runs from the command line, for example in CI:
+
+```sh
+cargo install --git https://github.com/whalebanana86/ai-dolmen dolmen-cli
+
+dolmen schema dump  --url postgres://user@host/db --dir db/schema   # write the snapshot
+dolmen schema check --url postgres://user@host/db --dir db/schema   # compare
+```
+
+`check` exits with 0 when the database matches, 1 when it differs (drift) and 2
+on errors. `--url` falls back to `DATABASE_URL`, and the password to `PGPASSWORD`:
+
+```yaml
+# .github/workflows/schema.yml
+- name: Fail when production drifts from db/schema
+  run: dolmen schema check --dir db/schema
+  env:
+    DATABASE_URL: ${{ secrets.DATABASE_URL }}
+```
+
 ## Development
 
 Prerequisites:

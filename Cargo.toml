@@ -11,7 +11,7 @@ repository = "https://github.com/whalebanana86/ai-dolmen"
 
 [workspace.dependencies]
 dolmen-core = { path = "crates/dolmen-core" }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

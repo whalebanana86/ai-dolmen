@@ -14,3 +14,7 @@ path = "src/main.rs"
 [dependencies]
 dolmen-core.workspace = true
 clap.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+tempfile = "3"

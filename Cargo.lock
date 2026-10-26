@@ -1046,6 +1046,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dolmen-core",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
