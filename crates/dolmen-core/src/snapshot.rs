@@ -112,6 +112,11 @@ impl Snapshot {
         Self { files }
     }
 
+    /// A snapshot from files read elsewhere, such as from a Git commit.
+    pub fn from_files(files: BTreeMap<String, String>) -> Self {
+        Self { files }
+    }
+
     pub fn files(&self) -> &BTreeMap<String, String> {
         &self.files
     }

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FileChange, SnapshotStatus, errorMessage, snapshots } from "./api";
+import { Commit, FileChange, SnapshotStatus, errorMessage, snapshots } from "./api";
+import { GitGraph } from "./GitGraph";
 
 interface Props {
   sessionId: number;
@@ -15,11 +16,11 @@ interface Props {
   onClose: () => void;
 }
 
-const KIND_LETTERS = { added: "A", modified: "M", removed: "D" } as const;
+type Tab = "changes" | "history";
 
 /**
- * Compares the database with its snapshot folder and writes the snapshot,
- * optionally committing it to the folder's Git repository.
+ * Compares the database with its snapshot folder, writes, commits and pushes
+ * the snapshot, and shows the folder's Git history.
  */
 export function SnapshotPanel({
   sessionId,
@@ -32,17 +33,11 @@ export function SnapshotPanel({
   onRefresh,
   onClose,
 }: Props) {
-  const changes = status?.changes ?? [];
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [message, setMessage] = useState("");
-  const [messageEdited, setMessageEdited] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<Tab>("changes");
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
-
-  // Follow the changes with the default message until the user edits it.
-  useEffect(() => {
-    if (!messageEdited) setMessage(defaultMessage(database, changes));
-  }, [status, database, messageEdited]);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const repository = status?.repository ?? null;
 
   async function chooseDir() {
     const picked = await open({ directory: true, title: "Choose the schema snapshot folder" });
@@ -52,41 +47,65 @@ export function SnapshotPanel({
     }
   }
 
-  async function save(commit: boolean) {
-    if (!dir) return;
-    setSaving(true);
+  /** Runs a Git action, then reloads the status and history. */
+  async function act(action: () => Promise<string>) {
+    setBusy(true);
     setResult(null);
     try {
-      const saved = await snapshots.save(sessionId, dir, commit ? message.trim() : null);
-      const count = `${changes.length} ${changes.length === 1 ? "file" : "files"}`;
-      setResult({
-        text: saved.commit ? `Committed ${saved.commit.slice(0, 7)} (${count})` : `Wrote ${count}`,
-        error: false,
-      });
-      setMessageEdited(false);
+      setResult({ text: await action(), error: false });
       onRefresh();
+      setHistoryVersion((v) => v + 1);
     } catch (error) {
       setResult({ text: errorMessage(error), error: true });
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
-  function toggle(path: string) {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (!next.delete(path)) next.add(path);
-      return next;
+  const push = () =>
+    act(async () => {
+      await snapshots.push(dir!);
+      return "Pushed";
     });
-  }
+
+  // Commits waiting to be pushed, or a branch that was never pushed.
+  const toPush = !repository
+    ? 0
+    : repository.upstream
+      ? repository.ahead
+      : repository.remotes.length > 0
+        ? "unpublished"
+        : 0;
 
   return (
     <div className="panel-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <aside className="side-panel" role="dialog" aria-label="Schema snapshot">
         <header className="side-panel-header">
           <strong>Schema snapshot</strong>
+          {dir && (
+            <div className="tabs" role="tablist">
+              {(["changes", "history"] as const).map((name) => (
+                <button
+                  key={name}
+                  role="tab"
+                  aria-selected={tab === name}
+                  className={tab === name ? "selected" : undefined}
+                  onClick={() => setTab(name)}
+                >
+                  {name === "changes" ? "Changes" : "History"}
+                </button>
+              ))}
+            </div>
+          )}
           <span className="spacer" />
-          <button onClick={onRefresh} disabled={!dir || checking} title="Compare again">
+          <button
+            onClick={() => {
+              onRefresh();
+              setHistoryVersion((v) => v + 1);
+            }}
+            disabled={!dir || checking}
+            title="Compare again"
+          >
             ↻
           </button>
           <button onClick={onClose} title="Close">
@@ -112,74 +131,44 @@ export function SnapshotPanel({
               </button>
             </>
           )}
-          {dir && status && (
-            <p className="muted">
-              {status.repository
-                ? `Git: ${status.repository.root}${status.repository.branch ? ` · ${status.repository.branch}` : ""}`
-                : "Not inside a Git repository: the files can be written but not committed."}
-            </p>
+          {dir && status && !repository && (
+            <p className="muted">Not inside a Git repository: the files can be written but not committed.</p>
+          )}
+          {repository && (
+            <div className="repo-line">
+              <span className="muted">
+                Git: {repository.root}
+                {repository.branch && ` · ${repository.branch}`}
+                {repository.upstream && ` → ${repository.upstream}`}
+                {repository.behind > 0 && ` · ${repository.behind} behind`}
+              </span>
+              <span className="spacer" />
+              {toPush !== 0 && (
+                <button onClick={push} disabled={busy}>
+                  {toPush === "unpublished" ? "Publish branch" : `Push ${toPush}`}
+                </button>
+              )}
+            </div>
           )}
           {dir && status && !status.initialized && (
             <p className="muted">The first write sets this folder up as a snapshot folder.</p>
           )}
         </section>
 
-        {dir && (
-          <section className="side-panel-section grow">
-            {statusError && <p className="error-text">{statusError}</p>}
-            {!status && checking && <p className="muted">Comparing with the database…</p>}
-            {status && changes.length === 0 && <p className="muted">The snapshot matches the database.</p>}
-            {changes.length > 0 && (
-              <>
-                <p className="muted">
-                  {changes.length} {changes.length === 1 ? "change" : "changes"} since the last snapshot
-                </p>
-                <ul className="change-list">
-                  {changes.map((change) => (
-                    <li key={change.path}>
-                      <button className="change-row" onClick={() => toggle(change.path)}>
-                        <span className={`change-kind ${change.kind}`}>{KIND_LETTERS[change.kind]}</span>
-                        <span className="change-path">{change.path}</span>
-                      </button>
-                      {expanded.has(change.path) && <Diff text={change.diff} />}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </section>
+        {dir && tab === "changes" && (
+          <ChangesTab
+            sessionId={sessionId}
+            database={database}
+            dir={dir}
+            status={status}
+            statusError={statusError}
+            checking={checking}
+            busy={busy}
+            act={act}
+          />
         )}
+        {dir && tab === "history" && <HistoryTab sessionId={sessionId} dir={dir} version={historyVersion} />}
 
-        {dir && changes.length > 0 && (
-          <footer className="side-panel-section">
-            <label className="field">
-              Commit message
-              <textarea
-                className="commit-message"
-                value={message}
-                onChange={(e) => {
-                  setMessage(e.target.value);
-                  setMessageEdited(true);
-                }}
-                rows={5}
-              />
-            </label>
-            <div className="actions">
-              <button onClick={() => save(false)} disabled={saving}>
-                Write files
-              </button>
-              <span className="spacer" />
-              <button
-                className="primary"
-                onClick={() => save(true)}
-                disabled={saving || !status?.repository || !message.trim()}
-                title={status?.repository ? undefined : "The folder isn't inside a Git repository"}
-              >
-                {saving ? "Saving…" : "Write & commit"}
-              </button>
-            </div>
-          </footer>
-        )}
         {result && (
           <p className={`side-panel-section ${result.error ? "error-text" : "muted"}`}>{result.text}</p>
         )}
@@ -188,14 +177,187 @@ export function SnapshotPanel({
   );
 }
 
+interface ChangesTabProps {
+  sessionId: number;
+  database: string;
+  dir: string;
+  status: SnapshotStatus | null;
+  statusError: string | null;
+  checking: boolean;
+  busy: boolean;
+  act: (action: () => Promise<string>) => void;
+}
+
+function ChangesTab({ sessionId, database, dir, status, statusError, checking, busy, act }: ChangesTabProps) {
+  const changes = status?.changes ?? [];
+  const repository = status?.repository ?? null;
+  const [message, setMessage] = useState("");
+  const [messageEdited, setMessageEdited] = useState(false);
+
+  // Follow the changes with the default message until the user edits it.
+  useEffect(() => {
+    if (!messageEdited) setMessage(defaultMessage(database, changes));
+  }, [status, database, messageEdited]);
+
+  const save = (commit: boolean, push: boolean) =>
+    act(async () => {
+      const saved = await snapshots.save(sessionId, dir, commit ? message.trim() : null, push);
+      setMessageEdited(false);
+      const files = `${changes.length} ${changes.length === 1 ? "file" : "files"}`;
+      if (!saved.commit) return `Wrote ${files}`;
+      return `${saved.pushed ? "Committed and pushed" : "Committed"} ${saved.commit.slice(0, 7)} (${files})`;
+    });
+
+  return (
+    <>
+      <section className="side-panel-section grow">
+        {statusError && <p className="error-text">{statusError}</p>}
+        {!status && checking && <p className="muted">Comparing with the database…</p>}
+        {status && changes.length === 0 && <p className="muted">The snapshot matches the database.</p>}
+        {changes.length > 0 && (
+          <>
+            <p className="muted">
+              {changes.length} {changes.length === 1 ? "change" : "changes"} since the last snapshot
+            </p>
+            <ChangeList changes={changes} />
+          </>
+        )}
+      </section>
+
+      {changes.length > 0 && (
+        <footer className="side-panel-section">
+          <label className="field">
+            Commit message
+            <textarea
+              className="commit-message"
+              value={message}
+              onChange={(e) => {
+                setMessage(e.target.value);
+                setMessageEdited(true);
+              }}
+              rows={5}
+            />
+          </label>
+          <div className="actions">
+            <button onClick={() => save(false, false)} disabled={busy}>
+              Write files
+            </button>
+            <span className="spacer" />
+            <button
+              onClick={() => save(true, false)}
+              disabled={busy || !repository || !message.trim()}
+              title={repository ? undefined : "The folder isn't inside a Git repository"}
+            >
+              Commit
+            </button>
+            {repository && repository.remotes.length > 0 && (
+              <button className="primary" onClick={() => save(true, true)} disabled={busy || !message.trim()}>
+                {busy ? "Saving…" : "Commit & push"}
+              </button>
+            )}
+          </div>
+        </footer>
+      )}
+    </>
+  );
+}
+
+function HistoryTab({ sessionId, dir, version }: { sessionId: number; dir: string; version: number }) {
+  const [commits, setCommits] = useState<Commit[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Commit | null>(null);
+  const [comparison, setComparison] = useState<FileChange[] | null>(null);
+  const [comparing, setComparing] = useState(false);
+
+  useEffect(() => {
+    snapshots
+      .history(dir)
+      .then((history) => {
+        setCommits(history);
+        setError(null);
+      })
+      .catch((err) => setError(errorMessage(err)));
+  }, [dir, version]);
+
+  const compare = useCallback(
+    (commit: Commit) => {
+      setSelected(commit);
+      setComparison(null);
+      setComparing(true);
+      snapshots
+        .compare(sessionId, dir, commit.hash)
+        .then(setComparison)
+        .catch((err) => setError(errorMessage(err)))
+        .finally(() => setComparing(false));
+    },
+    [sessionId, dir],
+  );
+
+  const label = selected
+    ? (selected.refs.find((ref) => ref.startsWith("tag: "))?.replace(/^tag: /, "") ?? selected.hash.slice(0, 7))
+    : "";
+
+  return (
+    <section className="side-panel-section grow history">
+      {error && <p className="error-text">{error}</p>}
+      {commits && commits.length === 0 && <p className="muted">No commits yet.</p>}
+      {commits && commits.length > 0 && (
+        <GitGraph commits={commits} selected={selected?.hash ?? null} onSelect={compare} />
+      )}
+      {selected && (
+        <div className="comparison">
+          <p>
+            <strong>Database → {label}</strong>{" "}
+            <span className="muted">what would change to make the database match this commit</span>
+          </p>
+          {comparing && <p className="muted">Comparing…</p>}
+          {comparison && comparison.length === 0 && (
+            <p className="muted">The database already matches this commit's snapshot.</p>
+          )}
+          {comparison && comparison.length > 0 && <ChangeList changes={comparison} />}
+        </div>
+      )}
+    </section>
+  );
+}
+
+const KIND_LETTERS = { added: "A", modified: "M", removed: "D" } as const;
+
+function ChangeList({ changes }: { changes: FileChange[] }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (path: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (!next.delete(path)) next.add(path);
+      return next;
+    });
+
+  return (
+    <ul className="change-list">
+      {changes.map((change) => (
+        <li key={change.path}>
+          <button className="change-row" onClick={() => toggle(change.path)}>
+            <span className={`change-kind ${change.kind}`}>{KIND_LETTERS[change.kind]}</span>
+            <span className="change-path">{change.path}</span>
+          </button>
+          {expanded.has(change.path) && <Diff text={change.diff} />}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Diff({ text }: { text: string }) {
   return (
     <pre className="diff">
-      {text.replace(/\n$/, "").split("\n").map((line, i) => (
-        <div key={i} className={diffLineClass(line)}>
-          {line || " "}
-        </div>
-      ))}
+      {text
+        .replace(/\n$/, "")
+        .split("\n")
+        .map((line, i) => (
+          <div key={i} className={diffLineClass(line)}>
+            {line || " "}
+          </div>
+        ))}
     </pre>
   );
 }

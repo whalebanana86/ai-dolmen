@@ -224,6 +224,98 @@ fn commits_only_the_snapshot_folder() {
 }
 
 #[test]
+fn pushes_and_tracks_the_upstream() {
+    let remote = TempDir::new().unwrap();
+    run_git(
+        remote.path(),
+        &["init", "--quiet", "--bare", "--initial-branch=main"],
+    );
+    let repo = repository();
+    run_git(
+        repo.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    let folder = repo.path().join("db").join("schema");
+
+    Snapshot::of(&database()).write(&folder).unwrap();
+    git::commit(&folder, "First snapshot").unwrap();
+    let before = git::repository(&folder).unwrap().unwrap();
+    assert_eq!(
+        (before.upstream, before.remotes),
+        (None, vec!["origin".to_owned()])
+    );
+
+    // The first push sets the upstream.
+    git::push(&folder).unwrap();
+    let pushed = git::repository(&folder).unwrap().unwrap();
+    assert_eq!(pushed.upstream.as_deref(), Some("origin/main"));
+    assert_eq!((pushed.ahead, pushed.behind), (0, 0));
+    assert_eq!(
+        run_git(remote.path(), &["rev-parse", "main"]),
+        run_git(repo.path(), &["rev-parse", "HEAD"])
+    );
+
+    let mut changed = database();
+    changed.schemas[0].enums.clear();
+    Snapshot::of(&changed).write(&folder).unwrap();
+    git::commit(&folder, "Drop mood").unwrap();
+    assert_eq!(git::repository(&folder).unwrap().unwrap().ahead, 1);
+    git::push(&folder).unwrap();
+    assert_eq!(git::repository(&folder).unwrap().unwrap().ahead, 0);
+}
+
+#[test]
+fn reads_history_and_past_snapshots() {
+    let repo = repository();
+    let folder = repo.path().join("db").join("schema");
+    assert!(
+        git::history(repo.path(), 50).unwrap().is_empty(),
+        "no commits yet"
+    );
+
+    let first = Snapshot::of(&database());
+    first.write(&folder).unwrap();
+    git::commit(&folder, "First snapshot").unwrap();
+    run_git(repo.path(), &["tag", "v1"]);
+
+    let mut changed = database();
+    changed.schemas[1].tables[0]
+        .columns
+        .push(column("email", "text"));
+    let second = Snapshot::of(&changed);
+    second.write(&folder).unwrap();
+    git::commit(&folder, "Add email").unwrap();
+
+    std::fs::write(repo.path().join("README.md"), "docs").unwrap();
+    run_git(repo.path(), &["add", "README.md"]);
+    run_git(
+        repo.path(),
+        &["commit", "--quiet", "--message", "Write docs"],
+    );
+
+    let history = git::history(&folder, 50).unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .map(|c| (c.subject.as_str(), c.changes_snapshot, c.head))
+            .collect::<Vec<_>>(),
+        [
+            ("Write docs", false, true),
+            ("Add email", true, false),
+            ("First snapshot", true, false),
+        ]
+    );
+    assert_eq!(history[0].refs, ["main"]);
+    assert_eq!(history[2].refs, ["tag: v1"]);
+    assert_eq!(history[0].parents, [history[1].hash.clone()]);
+    assert!(history[2].parents.is_empty());
+
+    assert_eq!(git::snapshot_at(&folder, "v1").unwrap(), first);
+    assert_eq!(git::snapshot_at(&folder, "HEAD").unwrap(), second);
+    assert!(git::snapshot_at(&folder, "--output=/tmp/x").is_err());
+}
+
+#[test]
 fn finds_no_repository_outside_git() {
     let dir = TempDir::new().unwrap();
     assert_eq!(git::repository(&dir.path().join("missing")).unwrap(), None);

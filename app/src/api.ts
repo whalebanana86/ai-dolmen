@@ -176,9 +176,36 @@ export interface FileChange {
   diff: string;
 }
 
+export interface Repository {
+  root: string;
+  /** The checked-out branch; null on a detached HEAD. */
+  branch: string | null;
+  /** The branch's upstream, e.g. "origin/main". */
+  upstream: string | null;
+  /** Commits the upstream doesn't have yet, as of the last fetch. */
+  ahead: number;
+  behind: number;
+  remotes: string[];
+}
+
+export interface Commit {
+  hash: string;
+  parents: string[];
+  author: string;
+  /** ISO 8601 author date. */
+  date: string;
+  subject: string;
+  /** Branches and tags at the commit, e.g. "main", "origin/main", "tag: v1". */
+  refs: string[];
+  /** Whether this is the checked-out commit. */
+  head: boolean;
+  /** Whether the commit changed the snapshot folder. */
+  changesSnapshot: boolean;
+}
+
 export interface SnapshotStatus {
   /** The Git repository holding the folder, if any. */
-  repository: { root: string; branch: string | null } | null;
+  repository: Repository | null;
   /** What writing the snapshot now would add, change or remove. */
   changes: FileChange[];
   /** Whether the folder already holds a snapshot. */
@@ -188,9 +215,20 @@ export interface SnapshotStatus {
 export const snapshots = {
   status: (sessionId: number, dir: string) =>
     invoke<SnapshotStatus>("snapshot_status", { sessionId, dir }),
-  /** Writes the snapshot into `dir`, and commits it when a message is given. */
-  save: (sessionId: number, dir: string, commitMessage: string | null) =>
-    invoke<{ commit: string | null }>("snapshot_save", { sessionId, dir, commitMessage }),
+  /** Writes the snapshot into `dir`, commits it when a message is given, and pushes when asked. */
+  save: (sessionId: number, dir: string, commitMessage: string | null, push: boolean) =>
+    invoke<{ commit: string | null; pushed: boolean }>("snapshot_save", {
+      sessionId,
+      dir,
+      commitMessage,
+      push,
+    }),
+  push: (dir: string) => invoke<void>("snapshot_push", { dir }),
+  /** Recent commits of the repository holding `dir`, on all branches and tags. */
+  history: (dir: string) => invoke<Commit[]>("snapshot_history", { dir }),
+  /** What would change in the database to make it match the snapshot at `rev`. */
+  compare: (sessionId: number, dir: string, rev: string) =>
+    invoke<FileChange[]>("snapshot_compare", { sessionId, dir, rev }),
   /** The CREATE statement for one object, as written in snapshots. */
   createStatement: (schema: string, object: SchemaObject) =>
     invoke<string>("ddl_create_statement", { schema, object }),
