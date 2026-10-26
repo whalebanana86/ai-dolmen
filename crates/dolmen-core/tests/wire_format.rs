@@ -1,7 +1,7 @@
 //! The JSON shapes the desktop app relies on (see `app/src/api.ts`).
 
 use dolmen_core::Error;
-use dolmen_core::connections::{PasswordChange, SavedConnection};
+use dolmen_core::connections::{PasswordChange, SavedConnection, SnapshotRemote};
 use dolmen_core::postgres::{ConnectConfig, SslMode, StatementResult};
 use dolmen_core::schema::{Column, ConstraintKind, Identity};
 use serde_json::json;
@@ -119,7 +119,11 @@ fn saved_connections_use_camel_case() {
         database: "postgres".into(),
         ssl_mode: SslMode::VerifyFull,
         has_password: true,
-        snapshot_dir: Some("/repo/db/schema".into()),
+        snapshot_dir: None,
+        snapshot_remote: Some(SnapshotRemote {
+            url: "git@github.com:you/schema.git".into(),
+            path: "db/schema".into(),
+        }),
     };
     let value = serde_json::to_value(&connection).unwrap();
     assert_eq!(
@@ -133,7 +137,8 @@ fn saved_connections_use_camel_case() {
             "database": "postgres",
             "sslMode": "verify-full",
             "hasPassword": true,
-            "snapshotDir": "/repo/db/schema",
+            "snapshotDir": null,
+            "snapshotRemote": { "url": "git@github.com:you/schema.git", "path": "db/schema" },
         })
     );
     assert_eq!(

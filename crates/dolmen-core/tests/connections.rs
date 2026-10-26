@@ -45,6 +45,7 @@ fn local() -> SavedConnection {
         ssl_mode: SslMode::Prefer,
         has_password: false,
         snapshot_dir: None,
+        snapshot_remote: None,
     }
 }
 

@@ -197,18 +197,23 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
 /// A repository that ignores the user's global hooks and signing settings.
 fn repository() -> TempDir {
     let dir = TempDir::new().unwrap();
-    let hooks = dir.path().join(".git-test-hooks");
-    std::fs::create_dir(&hooks).unwrap();
     run_git(dir.path(), &["init", "--quiet", "--initial-branch=main"]);
+    configure(dir.path());
+    dir
+}
+
+/// Sets a test identity and turns off the user's hooks and commit signing.
+fn configure(repo: &Path) {
+    let hooks = repo.join(".git").join("test-hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
     for (key, value) in [
         ("user.name", "Dolmen Test"),
         ("user.email", "test@example.com"),
         ("commit.gpgsign", "false"),
         ("core.hooksPath", hooks.to_str().unwrap()),
     ] {
-        run_git(dir.path(), &["config", key, value]);
+        run_git(repo, &["config", key, value]);
     }
-    dir
 }
 
 #[test]
@@ -342,6 +347,53 @@ fn reads_history_and_past_snapshots() {
     );
     assert_eq!(git::snapshot_at(&folder, "HEAD").unwrap(), second);
     assert!(git::snapshot_at(&folder, "--output=/tmp/x").is_err());
+}
+
+#[test]
+fn clones_syncs_and_pushes_a_schema_repository() {
+    // An empty remote, like a new GitHub repository.
+    let remote = TempDir::new().unwrap();
+    run_git(
+        remote.path(),
+        &["init", "--quiet", "--bare", "--initial-branch=main"],
+    );
+    let url = remote.path().to_str().unwrap();
+
+    let home = TempDir::new().unwrap();
+    let clone = home
+        .path()
+        .join("repositories")
+        .join(git::clone_dir_name(url));
+    git::clone(url, &clone).unwrap();
+    configure(&clone);
+    assert_eq!(git::origin_url(&clone).unwrap().as_deref(), Some(url));
+    assert!(
+        !git::sync(&clone).unwrap(),
+        "nothing to sync before the first push"
+    );
+
+    let folder = clone.join("db").join("schema");
+    Snapshot::of(&database()).write(&folder).unwrap();
+    git::commit(&folder, "First snapshot").unwrap();
+    git::push(&folder).unwrap();
+
+    // A teammate pushes a change from their own clone.
+    let teammate = TempDir::new().unwrap();
+    let theirs = teammate.path().join("schema-repo");
+    git::clone(url, &theirs).unwrap();
+    configure(&theirs);
+    let mut changed = database();
+    changed.schemas[0].enums.clear();
+    Snapshot::of(&changed)
+        .write(&theirs.join("db").join("schema"))
+        .unwrap();
+    git::commit(&theirs.join("db").join("schema"), "Drop mood").unwrap();
+    git::push(&theirs).unwrap();
+
+    assert!(git::sync(&clone).unwrap(), "the teammate's commit arrives");
+    assert_eq!(Snapshot::read(&folder).unwrap(), Snapshot::of(&changed));
+    assert!(!git::sync(&clone).unwrap());
+    assert!(git::clone("--upload-pack=touch", &home.path().join("x")).is_err());
 }
 
 #[test]

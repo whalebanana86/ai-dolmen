@@ -3,6 +3,7 @@ import { EditorView } from "@codemirror/view";
 import {
   Introspection,
   SavedConnection,
+  SnapshotRemote,
   SchemaObject,
   SessionInfo,
   SnapshotStatus,
@@ -65,8 +66,16 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   }, [session.id]);
   useEffect(refreshSchema, [refreshSchema]);
 
-  // An unsaved connection can still snapshot; its folder is just not remembered.
-  const [snapshotDir, setSnapshotDir] = useState<string | null>(connection?.snapshotDir ?? null);
+  // An unsaved connection can still snapshot; its location is just not remembered.
+  // With a remote, snapshotDir is the folder inside Dolmen's clone once it's ready.
+  const [snapshotRemote, setSnapshotRemote] = useState<SnapshotRemote | null>(
+    connection?.snapshotRemote ?? null,
+  );
+  const [snapshotDir, setSnapshotDir] = useState<string | null>(
+    connection?.snapshotRemote ? null : (connection?.snapshotDir ?? null),
+  );
+  const [clonePath, setClonePath] = useState<string | null>(null);
+  const [preparingRemote, setPreparingRemote] = useState(false);
   const [snapshotStatus, setSnapshotStatus] = useState<SnapshotStatus | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [checkingSnapshot, setCheckingSnapshot] = useState(false);
@@ -86,16 +95,58 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   }, [session.id, snapshotDir]);
   useEffect(refreshSnapshot, [refreshSnapshot]);
 
+  /** Clones the remote, or pulls new commits into Dolmen's clone of it. */
+  const syncRemote = useCallback(async (remote: SnapshotRemote) => {
+    setPreparingRemote(true);
+    try {
+      const checkout = await snapshots.checkout(remote.url, remote.path);
+      setClonePath(checkout.clone);
+      setSnapshotDir(checkout.dir);
+      setSnapshotError(null);
+      return checkout;
+    } catch (error) {
+      setSnapshotError(errorMessage(error));
+      throw error;
+    } finally {
+      setPreparingRemote(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (snapshotRemote) syncRemote(snapshotRemote).catch(() => {});
+  }, [snapshotRemote, syncRemote]);
+
+  /** Remembers the snapshot location with the saved connection, if there is one. */
+  async function saveLocation(location: Pick<SavedConnection, "snapshotDir" | "snapshotRemote">) {
+    if (!connection) return;
+    try {
+      onConnectionChange(await connections.save({ ...connection, ...location }, { kind: "keep" }));
+    } catch (error) {
+      setSnapshotError(`The location is in use but couldn't be saved with the connection: ${errorMessage(error)}`);
+    }
+  }
+
   async function chooseSnapshotDir(dir: string) {
     setSnapshotStatus(null);
+    setSnapshotRemote(null);
+    setClonePath(null);
     setSnapshotDir(dir);
-    if (connection) {
-      try {
-        onConnectionChange(await connections.save({ ...connection, snapshotDir: dir }, { kind: "keep" }));
-      } catch (error) {
-        setSnapshotError(`The folder is in use but couldn't be saved with the connection: ${errorMessage(error)}`);
-      }
-    }
+    await saveLocation({ snapshotDir: dir, snapshotRemote: null });
+  }
+
+  async function chooseSnapshotRemote(remote: SnapshotRemote) {
+    setSnapshotStatus(null);
+    setSnapshotDir(null);
+    setSnapshotRemote(remote);
+    await saveLocation({ snapshotDir: null, snapshotRemote: remote });
+  }
+
+  /** Back to choosing a location; nothing is saved until a new one is chosen. */
+  function resetSnapshotLocation() {
+    setSnapshotStatus(null);
+    setSnapshotError(null);
+    setSnapshotRemote(null);
+    setClonePath(null);
+    setSnapshotDir(null);
   }
 
   async function run() {
@@ -236,7 +287,13 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           sessionId={session.id}
           database={session.database}
           dir={snapshotDir}
+          remote={snapshotRemote}
+          clonePath={clonePath}
+          preparingRemote={preparingRemote}
           onChooseDir={chooseSnapshotDir}
+          onChooseRemote={chooseSnapshotRemote}
+          onSyncRemote={async () => (snapshotRemote ? (await syncRemote(snapshotRemote)).updated : false)}
+          onResetLocation={resetSnapshotLocation}
           status={snapshotStatus}
           statusError={snapshotError}
           checking={checkingSnapshot}

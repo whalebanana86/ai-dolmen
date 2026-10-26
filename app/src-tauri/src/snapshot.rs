@@ -1,7 +1,7 @@
 //! Schema snapshot commands: compare the database with its snapshot folder,
 //! write the snapshot, and commit it with Git.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use dolmen_core::Error;
 use dolmen_core::git::{self, Commit, Repository};
@@ -10,7 +10,7 @@ use dolmen_core::postgres::migrate::{self, Plan, Rename};
 use dolmen_core::schema::Database;
 use dolmen_core::snapshot::{ChangeKind, FileChange, MARKER, MODEL_FILE, Snapshot};
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::pg::Sessions;
 
@@ -23,6 +23,59 @@ pub struct SnapshotStatus {
     changes: Vec<FileChange>,
     /// Whether the folder already holds a snapshot.
     initialized: bool,
+}
+
+#[derive(Serialize)]
+pub struct Checkout {
+    /// The snapshot folder inside the clone, for the other snapshot commands.
+    dir: String,
+    /// Where Dolmen keeps its clone.
+    clone: String,
+    /// Whether new commits arrived from the remote.
+    updated: bool,
+}
+
+/// Makes sure Dolmen's own clone of `url` exists and is up to date (fast-forward
+/// only), and returns the snapshot folder `path` inside it.
+#[tauri::command]
+pub async fn snapshot_checkout(
+    url: String,
+    path: String,
+    app: AppHandle,
+) -> Result<Checkout, Error> {
+    let relative = Path::new(path.trim());
+    if path.trim().is_empty()
+        || !relative
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+    {
+        return Err(refused(
+            "The snapshot folder must be a path inside the repository, such as db/schema.",
+        ));
+    }
+    let data = app.path().app_data_dir().map_err(|err| Error::Storage {
+        message: format!("no app data folder: {err}"),
+    })?;
+    let clone = data.join("repositories").join(git::clone_dir_name(&url));
+    let updated = if clone.join(".git").exists() {
+        if git::origin_url(&clone)?.as_deref() != Some(url.as_str()) {
+            return Err(Error::Storage {
+                message: format!(
+                    "{} already holds a clone of another repository; remove it to use {url}.",
+                    clone.display()
+                ),
+            });
+        }
+        git::sync(&clone)?
+    } else {
+        git::clone(&url, &clone)?;
+        false
+    };
+    Ok(Checkout {
+        dir: clone.join(relative).to_string_lossy().into_owned(),
+        clone: clone.to_string_lossy().into_owned(),
+        updated,
+    })
 }
 
 #[derive(Serialize)]

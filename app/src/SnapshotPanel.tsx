@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Commit, FileChange, SnapshotStatus, errorMessage, snapshots } from "./api";
+import { Commit, FileChange, SnapshotRemote, SnapshotStatus, errorMessage, snapshots } from "./api";
 import { ApplyDialog } from "./ApplyDialog";
 import { GitGraph } from "./GitGraph";
 
@@ -8,8 +8,18 @@ interface Props {
   sessionId: number;
   /** The database name, for the default commit message. */
   database: string;
+  /** The snapshot folder: chosen, or inside Dolmen's clone of `remote` once it's ready. */
   dir: string | null;
+  /** The repository Dolmen clones and pushes, when the snapshot lives in one. */
+  remote: SnapshotRemote | null;
+  /** Where Dolmen keeps its clone of `remote`. */
+  clonePath: string | null;
+  preparingRemote: boolean;
   onChooseDir: (dir: string) => void;
+  onChooseRemote: (remote: SnapshotRemote) => void;
+  /** Pulls new commits into the clone of `remote`; resolves to whether any arrived. */
+  onSyncRemote: () => Promise<boolean>;
+  onResetLocation: () => void;
   status: SnapshotStatus | null;
   statusError: string | null;
   checking: boolean;
@@ -29,7 +39,13 @@ export function SnapshotPanel({
   sessionId,
   database,
   dir,
+  remote,
+  clonePath,
+  preparingRemote,
   onChooseDir,
+  onChooseRemote,
+  onSyncRemote,
+  onResetLocation,
   status,
   statusError,
   checking,
@@ -50,6 +66,19 @@ export function SnapshotPanel({
       setResult(null);
       onChooseDir(picked);
     }
+  }
+
+  /** Compares again, pulling the remote's new commits first when there is one. */
+  async function refresh() {
+    setHistoryVersion((v) => v + 1);
+    if (remote) {
+      try {
+        await onSyncRemote();
+      } catch {
+        return; // The error shows in the panel.
+      }
+    }
+    onRefresh();
   }
 
   /** Runs a Git action, then reloads the status and history. */
@@ -104,12 +133,9 @@ export function SnapshotPanel({
           )}
           <span className="spacer" />
           <button
-            onClick={() => {
-              onRefresh();
-              setHistoryVersion((v) => v + 1);
-            }}
-            disabled={!dir || checking}
-            title="Compare again"
+            onClick={refresh}
+            disabled={!dir || checking || preparingRemote}
+            title={remote ? "Pull new commits and compare again" : "Compare again"}
           >
             ↻
           </button>
@@ -119,23 +145,38 @@ export function SnapshotPanel({
         </header>
 
         <section className="side-panel-section">
-          {dir ? (
+          {remote ? (
+            <>
+              <div className="snapshot-folder">
+                <code title={remote.url}>{remote.url}</code>
+                <span className="muted">{remote.path}</span>
+                <button onClick={onResetLocation} disabled={busy}>
+                  Change…
+                </button>
+              </div>
+              <p className="muted">
+                {preparingRemote
+                  ? "Getting the repository…"
+                  : clonePath && `Dolmen keeps its copy in ${clonePath} and pushes each commit.`}
+              </p>
+            </>
+          ) : dir ? (
             <div className="snapshot-folder">
               <code title={dir}>{dir}</code>
-              <button onClick={chooseDir}>Change…</button>
+              <button onClick={onResetLocation} disabled={busy}>
+                Change…
+              </button>
             </div>
           ) : (
-            <>
-              <p>
-                Choose a folder for this database's schema snapshot: one DDL file per table, view and
-                function, ready to commit. A folder in your app's repository, such as{" "}
-                <code>db/schema</code>, works well.
-              </p>
-              <button className="primary" onClick={chooseDir}>
-                Choose folder…
-              </button>
-            </>
+            <LocationChooser
+              onChooseDir={chooseDir}
+              onChooseRemote={(chosen) => {
+                setResult(null);
+                onChooseRemote(chosen);
+              }}
+            />
           )}
+          {statusError && !dir && <p className="error-text">{statusError}</p>}
           {dir && status && !repository && (
             <p className="muted">Not inside a Git repository: the files can be written but not committed.</p>
           )}
@@ -170,7 +211,11 @@ export function SnapshotPanel({
             checking={checking}
             busy={busy}
             act={act}
-            onApplyFiles={() => setApplyTarget({ rev: null, label: "the snapshot files" })}
+            remote={remote !== null}
+            onSyncRemote={onSyncRemote}
+            onApplyFiles={() =>
+              setApplyTarget({ rev: null, label: remote ? "the latest snapshot" : "the snapshot files" })
+            }
           />
         )}
         {dir && tab === "history" && (
@@ -205,6 +250,72 @@ export function SnapshotPanel({
   );
 }
 
+function LocationChooser({
+  onChooseDir,
+  onChooseRemote,
+}: {
+  onChooseDir: () => void;
+  onChooseRemote: (remote: SnapshotRemote) => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [path, setPath] = useState("db/schema");
+
+  return (
+    <div className="location-chooser">
+      <p>
+        Where should this database's schema snapshot live? It holds one DDL file per table, view and
+        function, ready to commit.
+      </p>
+      <form
+        className="location-choice"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onChooseRemote({ url: url.trim(), path: path.trim() });
+        }}
+      >
+        <strong>A Git repository</strong>
+        <p className="muted">
+          Dolmen keeps its own copy and pushes every commit. Good for a repository just for the schema.
+          It uses your git setup, so an SSH address such as <code>git@github.com:you/schema.git</code>{" "}
+          pushes with your SSH key.
+        </p>
+        <div className="field-row">
+          <label className="field grow">
+            Repository URL
+            <input
+              value={url}
+              placeholder="git@github.com:you/schema.git"
+              onChange={(e) => setUrl(e.target.value)}
+              required
+            />
+          </label>
+          <label className="field">
+            Folder in it
+            <input value={path} onChange={(e) => setPath(e.target.value)} required />
+          </label>
+        </div>
+        <div className="actions">
+          <span className="spacer" />
+          <button type="submit" className="primary" disabled={!url.trim() || !path.trim()}>
+            Use repository
+          </button>
+        </div>
+      </form>
+      <div className="location-choice">
+        <strong>A folder on this computer</strong>
+        <p className="muted">
+          For example <code>db/schema</code> in your app's repository, so schema and code change in the same
+          commits.
+        </p>
+        <div className="actions">
+          <span className="spacer" />
+          <button onClick={onChooseDir}>Choose folder…</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface ChangesTabProps {
   sessionId: number;
   database: string;
@@ -214,6 +325,9 @@ interface ChangesTabProps {
   checking: boolean;
   busy: boolean;
   act: (action: () => Promise<string>) => void;
+  /** Whether the snapshot lives in a repository Dolmen manages, which it pushes on every commit. */
+  remote: boolean;
+  onSyncRemote: () => Promise<boolean>;
   /** Opens the plan that makes the database match the folder's files. */
   onApplyFiles: () => void;
 }
@@ -227,6 +341,8 @@ function ChangesTab({
   checking,
   busy,
   act,
+  remote,
+  onSyncRemote,
   onApplyFiles,
 }: ChangesTabProps) {
   const changes = status?.changes ?? [];
@@ -241,6 +357,11 @@ function ChangesTab({
 
   const save = (commit: boolean, push: boolean) =>
     act(async () => {
+      // Pull first. If someone else's commits arrive, the reviewed changes are
+      // out of date, and committing now could undo theirs.
+      if (remote && (await onSyncRemote())) {
+        throw new Error("New commits arrived from the repository; review the changes again before committing.");
+      }
       const saved = await snapshots.save(sessionId, dir, commit ? message.trim() : null, push);
       setMessageEdited(false);
       const files = `${changes.length} ${changes.length === 1 ? "file" : "files"}`;
@@ -279,9 +400,11 @@ function ChangesTab({
             />
           </label>
           <div className="actions">
-            <button onClick={() => save(false, false)} disabled={busy}>
-              Write files
-            </button>
+            {!remote && (
+              <button onClick={() => save(false, false)} disabled={busy}>
+                Write files
+              </button>
+            )}
             {status?.initialized && (
               <button
                 onClick={onApplyFiles}
@@ -292,13 +415,15 @@ function ChangesTab({
               </button>
             )}
             <span className="spacer" />
-            <button
-              onClick={() => save(true, false)}
-              disabled={busy || !repository || !message.trim()}
-              title={repository ? undefined : "The folder isn't inside a Git repository"}
-            >
-              Commit
-            </button>
+            {!remote && (
+              <button
+                onClick={() => save(true, false)}
+                disabled={busy || !repository || !message.trim()}
+                title={repository ? undefined : "The folder isn't inside a Git repository"}
+              >
+                Commit
+              </button>
+            )}
             {repository && repository.remotes.length > 0 && (
               <button className="primary" onClick={() => save(true, true)} disabled={busy || !message.trim()}>
                 {busy ? "Saving…" : "Commit & push"}

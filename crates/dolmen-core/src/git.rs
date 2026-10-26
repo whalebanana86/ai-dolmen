@@ -114,6 +114,94 @@ pub fn push(dir: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Clones `url` into `into`, which must not exist yet.
+pub fn clone(url: &str, into: &Path) -> Result<(), Error> {
+    if url.starts_with('-') {
+        return Err(storage(format!("{url:?} isn't a repository URL")));
+    }
+    let parent = into
+        .parent()
+        .ok_or_else(|| storage(format!("{} has no parent folder", into.display())))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|err| storage(format!("{}: {err}", parent.display())))?;
+    let into = into.to_string_lossy();
+    run(parent, &["clone", "--quiet", "--", url, &into])?;
+    Ok(())
+}
+
+/// Brings the branch up to date with its upstream, by fast-forward only, so
+/// Dolmen never merges on its own. Returns whether new commits arrived.
+pub fn sync(dir: &Path) -> Result<bool, Error> {
+    let has_upstream = git(
+        dir,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+    )?
+    .status
+    .success();
+    if !has_upstream {
+        // A clone of an empty repository has none until its first push.
+        return Ok(false);
+    }
+    run(dir, &["fetch", "--quiet"])?;
+    let before = stdout(&run(dir, &["rev-parse", "HEAD"])?);
+    if git(dir, &["merge", "--ff-only", "--quiet", "@{upstream}"])?
+        .status
+        .success()
+    {
+        Ok(stdout(&run(dir, &["rev-parse", "HEAD"])?) != before)
+    } else {
+        Err(storage(format!(
+            "The branch and its upstream have both changed, so they can't be fast-forwarded; \
+             reconcile them with git in {}.",
+            dir.display()
+        )))
+    }
+}
+
+/// The URL of the `origin` remote, if there is one.
+pub fn origin_url(dir: &Path) -> Result<Option<String>, Error> {
+    let output = git(dir, &["remote", "get-url", "origin"])?;
+    Ok(output.status.success().then(|| stdout(&output)))
+}
+
+/// A folder name for a clone of `url`: its host and path, lower-cased, with
+/// everything but letters, digits, `.` and `-` turned into `_`. For example
+/// `git@github.com:you/schema.git` becomes `github.com_you_schema`.
+pub fn clone_dir_name(url: &str) -> String {
+    let mut rest = url;
+    if let Some((_, after)) = rest.split_once("://") {
+        rest = after;
+    }
+    // Drop user info such as `git@` or `user:token@`.
+    if let Some((before, after)) = rest.split_once('@')
+        && !before.contains('/')
+    {
+        rest = after;
+    }
+    let rest = rest.trim_end_matches('/');
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+
+    let mut name = String::new();
+    for ch in rest.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' {
+            name.push(ch);
+        } else if !name.ends_with('_') {
+            name.push('_');
+        }
+    }
+    let name = name.trim_matches('_');
+    if name.is_empty() {
+        "repository".to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Commit {
@@ -342,4 +430,31 @@ fn storage(message: impl Into<String>) -> Error {
 
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_clone_folders_after_host_and_path() {
+        assert_eq!(
+            clone_dir_name("git@github.com:you/schema.git"),
+            "github.com_you_schema"
+        );
+        assert_eq!(
+            clone_dir_name("git@github-personal:whalebanana86/ai-dolmen-test.git"),
+            "github-personal_whalebanana86_ai-dolmen-test"
+        );
+        assert_eq!(
+            clone_dir_name("https://user:token@github.com/You/Schema/"),
+            "github.com_you_schema"
+        );
+        assert_eq!(
+            clone_dir_name("ssh://git@host:2222/a/b.git"),
+            "host_2222_a_b"
+        );
+        assert_eq!(clone_dir_name("/srv/git/schema.git"), "srv_git_schema");
+        assert_eq!(clone_dir_name("@@@"), "repository");
+    }
 }

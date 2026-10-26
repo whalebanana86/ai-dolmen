@@ -30,6 +30,7 @@ const NEW_CONNECTION: Draft = {
   sslMode: "prefer",
   hasPassword: false,
   snapshotDir: null,
+  snapshotRemote: null,
 };
 
 function toDraft(connection: SavedConnection): Draft {

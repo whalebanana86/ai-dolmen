@@ -37,6 +37,18 @@ pub struct SavedConnection {
     /// Where this database's schema snapshot is written, usually inside a Git repository.
     #[serde(default)]
     pub snapshot_dir: Option<String>,
+    /// A Git repository Dolmen clones and pushes for the snapshot; when set,
+    /// it is used instead of `snapshot_dir`.
+    #[serde(default)]
+    pub snapshot_remote: Option<SnapshotRemote>,
+}
+
+/// A snapshot kept in a repository Dolmen manages its own clone of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotRemote {
+    pub url: String,
+    /// The snapshot folder inside the repository, e.g. `db/schema`.
+    pub path: String,
 }
 
 /// What to do with the stored password when saving a connection.

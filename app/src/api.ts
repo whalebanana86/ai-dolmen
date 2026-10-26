@@ -158,6 +158,14 @@ export interface SavedConnection {
   hasPassword: boolean;
   /** Where this database's schema snapshot is written, usually inside a Git repository. */
   snapshotDir: string | null;
+  /** A repository Dolmen clones and pushes for the snapshot; used instead of snapshotDir. */
+  snapshotRemote: SnapshotRemote | null;
+}
+
+export interface SnapshotRemote {
+  url: string;
+  /** The snapshot folder inside the repository, e.g. "db/schema". */
+  path: string;
 }
 
 export type PasswordChange = { kind: "keep" } | { kind: "set"; password: string } | { kind: "forget" };
@@ -233,6 +241,12 @@ export interface ApplyPreview {
 }
 
 export const snapshots = {
+  /**
+   * Clones the repository into Dolmen's own folder, or brings that clone up to
+   * date (fast-forward only), and returns the snapshot folder inside it.
+   */
+  checkout: (url: string, path: string) =>
+    invoke<{ dir: string; clone: string; updated: boolean }>("snapshot_checkout", { url, path }),
   status: (sessionId: number, dir: string) =>
     invoke<SnapshotStatus>("snapshot_status", { sessionId, dir }),
   /** Writes the snapshot into `dir`, commits it when a message is given, and pushes when asked. */
