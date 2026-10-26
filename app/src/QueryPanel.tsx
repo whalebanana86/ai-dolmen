@@ -13,7 +13,6 @@ import {
 import { ResultView } from "./ResultView";
 import { SchemaTree } from "./SchemaTree";
 import { SqlEditor } from "./SqlEditor";
-import { quoteIdent } from "./sqlIdent";
 
 const INITIAL_SQL = "SELECT version();\n";
 
@@ -92,22 +91,20 @@ export function QueryPanel({ session, onDisconnect }: Props) {
     if (results.some((result) => result.kind === "command")) refreshSchema();
   }
 
-  /** Adds a query for the table at the end of the editor and runs it. */
-  function openTable(schema: string, name: string) {
+  /** Adds a statement at the end of the editor, puts the cursor on it, and runs it if asked. */
+  function insertStatement(statement: string, runIt: boolean) {
     const view = viewRef.current;
-    if (!view || running) return;
-    const qualified =
-      schema === introspection?.defaultSchema ? quoteIdent(name) : `${quoteIdent(schema)}.${quoteIdent(name)}`;
+    if (!view) return;
     const doc = view.state.doc;
     const separator = doc.length === 0 || doc.toString().endsWith("\n") ? "" : "\n";
     const start = doc.length + separator.length;
     view.dispatch({
-      changes: { from: doc.length, insert: `${separator}SELECT * FROM ${qualified} LIMIT 1000;\n` },
+      changes: { from: doc.length, insert: `${separator}${statement}\n` },
       selection: { anchor: start },
       scrollIntoView: true,
     });
     view.focus();
-    run();
+    if (runIt) run();
   }
 
   function cancel() {
@@ -145,8 +142,7 @@ export function QueryPanel({ session, onDisconnect }: Props) {
         <SchemaTree
           introspection={introspection}
           loading={loadingSchema}
-          onRefresh={refreshSchema}
-          onOpen={openTable}
+          actions={{ insert: insertStatement, refresh: refreshSchema }}
         />
         <div className="workspace-main">
           <SqlEditor
