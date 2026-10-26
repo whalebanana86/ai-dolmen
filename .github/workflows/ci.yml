@@ -40,7 +40,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - name: cargo test
+        run: |
+          set -o pipefail
+          cargo test --workspace --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/test-output.txt"
+      # Annotations show on the run page and pull requests, so failures are
+      # readable without opening (or being allowed to open) the full log.
+      - name: Report failed tests
+        if: failure()
+        run: |
+          details=$(grep -E -A 6 "^---- .* stdout ----|^failures:$" "$RUNNER_TEMP/test-output.txt" | head -80 \
+            | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk '{ printf "%s%%0A", $0 }')
+          echo "::error title=Failed tests::${details:-See the cargo test step}"
 
   frontend:
     name: Frontend (typecheck, build)
