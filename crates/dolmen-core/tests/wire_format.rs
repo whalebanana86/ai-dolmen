@@ -2,7 +2,8 @@
 
 use dolmen_core::Error;
 use dolmen_core::connections::{PasswordChange, SavedConnection};
-use dolmen_core::postgres::{ConnectConfig, SchemaOutline, SslMode, StatementResult, TableOutline};
+use dolmen_core::postgres::{ConnectConfig, SslMode, StatementResult};
+use dolmen_core::schema::{Column, ConstraintKind, Identity};
 use serde_json::json;
 
 #[test]
@@ -53,21 +54,31 @@ fn statement_results_are_tagged_by_kind() {
 }
 
 #[test]
-fn schema_outline_uses_camel_case() {
-    let outline = SchemaOutline {
-        default_schema: "public".into(),
-        tables: vec![TableOutline {
-            schema: "public".into(),
-            name: "users".into(),
-            columns: vec!["id".into(), "email".into()],
-        }],
+fn schema_columns_and_kinds_use_camel_case() {
+    let column = Column {
+        name: "id".into(),
+        data_type: "bigint".into(),
+        nullable: false,
+        default: None,
+        identity: Some(Identity::ByDefault),
+        generated: None,
+        comment: None,
     };
     assert_eq!(
-        serde_json::to_value(outline).unwrap(),
+        serde_json::to_value(column).unwrap(),
         json!({
-            "defaultSchema": "public",
-            "tables": [{ "schema": "public", "name": "users", "columns": ["id", "email"] }],
+            "name": "id",
+            "dataType": "bigint",
+            "nullable": false,
+            "default": null,
+            "identity": "byDefault",
+            "generated": null,
+            "comment": null,
         })
+    );
+    assert_eq!(
+        serde_json::to_value(ConstraintKind::PrimaryKey).unwrap(),
+        json!("primaryKey")
     );
 }
 

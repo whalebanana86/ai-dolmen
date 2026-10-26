@@ -5,19 +5,19 @@ import { Compartment, EditorState, Prec } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { PostgreSQL, SQLNamespace, sql } from "@codemirror/lang-sql";
 import { tags } from "@lezer/highlight";
-import { SchemaOutline } from "./api";
+import { Introspection } from "./api";
 
 interface Props {
   initialValue: string;
-  /** Tables and columns to complete; null until loaded. */
-  outline: SchemaOutline | null;
+  /** The database structure, for completing tables and columns; null until loaded. */
+  introspection: Introspection | null;
   onRun: () => void;
   onChange: (value: string) => void;
   /** Set to the editor view, so the parent can read text and selection when running. */
   viewRef: { current: EditorView | null };
 }
 
-export function SqlEditor({ initialValue, outline, onRun, onChange, viewRef }: Props) {
+export function SqlEditor({ initialValue, introspection, onRun, onChange, viewRef }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [language] = useState(() => new Compartment());
   // The view is created once, so it reads the latest callbacks through a ref.
@@ -63,26 +63,30 @@ export function SqlEditor({ initialValue, outline, onRun, onChange, viewRef }: P
   }, []);
 
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: language.reconfigure(sqlLanguage(outline)) });
-  }, [outline, language, viewRef]);
+    viewRef.current?.dispatch({ effects: language.reconfigure(sqlLanguage(introspection)) });
+  }, [introspection, language, viewRef]);
 
   return <div ref={parentRef} className="editor" />;
 }
 
-function sqlLanguage(outline: SchemaOutline | null) {
+function sqlLanguage(introspection: Introspection | null) {
   return sql({
     dialect: PostgreSQL,
     upperCaseKeywords: true,
-    schema: outline ? namespace(outline) : undefined,
-    defaultSchema: outline?.defaultSchema,
+    schema: introspection ? namespace(introspection) : undefined,
+    defaultSchema: introspection?.defaultSchema ?? undefined,
   });
 }
 
-/** `{ schema: { table: [columns] } }`, so both `table` and `schema.table` complete. */
-function namespace(outline: SchemaOutline): SQLNamespace {
+/** `{ schema: { table: [columns] } }` for tables and views, so `table` and `schema.table` complete. */
+function namespace({ database }: Introspection): SQLNamespace {
   const schemas: Record<string, Record<string, string[]>> = {};
-  for (const table of outline.tables) {
-    (schemas[table.schema] ??= {})[table.name] = table.columns;
+  for (const schema of database.schemas) {
+    const relations: Record<string, string[]> = {};
+    for (const relation of [...schema.tables, ...schema.views]) {
+      relations[relation.name] = relation.columns.map((column) => column.name);
+    }
+    schemas[schema.name] = relations;
   }
   return schemas;
 }

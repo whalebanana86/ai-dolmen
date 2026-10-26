@@ -5,6 +5,7 @@
 pub mod connections;
 mod error;
 pub mod postgres;
+pub mod schema;
 pub mod sql;
 
 pub use error::Error;

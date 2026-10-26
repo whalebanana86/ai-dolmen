@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::Error;
+use crate::schema::Database;
+
+mod introspect;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -75,23 +78,6 @@ pub enum StatementResult {
     },
     /// A statement that returned no rows, such as `UPDATE` or `CREATE TABLE`.
     Command { rows_affected: u64 },
-}
-
-/// Tables and their columns, as the editor needs them for completion.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SchemaOutline {
-    /// The schema unqualified names resolve to first, usually `public`.
-    pub default_schema: String,
-    pub tables: Vec<TableOutline>,
-}
-
-/// A table, view, materialized view or foreign table.
-#[derive(Debug, Serialize)]
-pub struct TableOutline {
-    pub schema: String,
-    pub name: String,
-    pub columns: Vec<String>,
 }
 
 /// A connection to a PostgreSQL server.
@@ -195,51 +181,18 @@ impl Session {
         Ok(results)
     }
 
-    /// Lists the tables and columns the user can see, outside of system schemas.
-    pub async fn schema_outline(&self) -> Result<SchemaOutline, Error> {
-        let default_schema: Option<String> = self
+    /// Reads the structure of the database: schemas, tables, views, functions and types.
+    pub async fn introspect(&self) -> Result<Database, Error> {
+        introspect::introspect(&self.client).await
+    }
+
+    /// The schema unqualified names resolve to first, usually `public`.
+    pub async fn current_schema(&self) -> Result<Option<String>, Error> {
+        Ok(self
             .client
             .query_one("SELECT current_schema()", &[])
             .await?
-            .get(0);
-        let rows = self
-            .client
-            .query(
-                "SELECT n.nspname, c.relname, a.attname
-                 FROM pg_catalog.pg_attribute a
-                 JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-                 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-                   AND a.attnum > 0
-                   AND NOT a.attisdropped
-                   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-                   AND n.nspname NOT LIKE 'pg\\_toast%'
-                   AND n.nspname NOT LIKE 'pg\\_temp%'
-                   AND has_table_privilege(c.oid, 'SELECT')
-                 ORDER BY n.nspname, c.relname, a.attnum",
-                &[],
-            )
-            .await?;
-
-        let mut tables: Vec<TableOutline> = Vec::new();
-        for row in rows {
-            let (schema, name, column): (String, String, String) =
-                (row.get(0), row.get(1), row.get(2));
-            match tables.last_mut() {
-                Some(table) if table.schema == schema && table.name == name => {
-                    table.columns.push(column)
-                }
-                _ => tables.push(TableOutline {
-                    schema,
-                    name,
-                    columns: vec![column],
-                }),
-            }
-        }
-        Ok(SchemaOutline {
-            default_schema: default_schema.unwrap_or_else(|| "public".into()),
-            tables,
-        })
+            .get(0))
     }
 
     /// Asks the server to cancel the statement this session is running, if any.

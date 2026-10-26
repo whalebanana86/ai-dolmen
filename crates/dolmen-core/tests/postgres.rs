@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use dolmen_core::Error;
 use dolmen_core::postgres::{ConnectConfig, Session, SslMode, StatementResult};
+use dolmen_core::schema::{Column, ConstraintKind, FunctionKind, Identity, TableKind};
 
 fn test_config() -> Option<ConnectConfig> {
     let host = std::env::var("DOLMEN_TEST_PG_HOST").ok()?;
@@ -208,30 +209,196 @@ async fn rejects_a_wrong_password() {
 }
 
 #[tokio::test]
-async fn outlines_tables_and_columns_for_completion() {
+async fn introspects_the_database_structure() {
     let config = config_or_skip!();
     let session = connect(&config).await;
     execute(
         &session,
-        "CREATE SCHEMA IF NOT EXISTS outline_test; \
-         DROP TABLE IF EXISTS outline_test.people; \
-         CREATE TABLE outline_test.people (id int, name text, born date); \
-         ALTER TABLE outline_test.people DROP COLUMN born",
+        "DROP SCHEMA IF EXISTS introspect_test CASCADE;
+         CREATE SCHEMA introspect_test;
+         SET search_path = introspect_test;
+         CREATE EXTENSION pgcrypto SCHEMA introspect_test;
+         CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+         CREATE TABLE authors (
+           id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+           email varchar(255) NOT NULL UNIQUE,
+           dropped int
+         );
+         ALTER TABLE authors DROP COLUMN dropped;
+         COMMENT ON TABLE authors IS 'people who write';
+         CREATE TABLE posts (
+           id serial PRIMARY KEY,
+           author_id bigint NOT NULL REFERENCES authors (id),
+           title text NOT NULL CHECK (title <> ''),
+           mood mood DEFAULT 'ok',
+           title_length int GENERATED ALWAYS AS (length(title)) STORED
+         );
+         COMMENT ON COLUMN posts.title IS 'shown in lists';
+         CREATE INDEX posts_author_idx ON posts (author_id);
+         CREATE VIEW recent_posts AS SELECT id, title FROM posts;
+         CREATE MATERIALIZED VIEW post_counts AS SELECT author_id, count(*) AS n FROM posts GROUP BY author_id;
+         CREATE FUNCTION add(a int, b int) RETURNS int LANGUAGE sql AS 'SELECT a + b';
+         CREATE PROCEDURE touch() LANGUAGE sql AS 'SELECT 1';
+         CREATE SEQUENCE invoice_numbers;",
     )
     .await;
 
-    let outline = session.schema_outline().await.expect("outline");
-    assert_eq!(outline.default_schema, "public");
-    let people = outline
-        .tables
-        .iter()
-        .find(|t| t.schema == "outline_test" && t.name == "people")
-        .expect("outline_test.people listed");
-    // Dropped columns are hidden and the rest keep their order.
-    assert_eq!(people.columns, ["id", "name"]);
-    assert!(outline.tables.iter().all(|t| t.schema != "pg_catalog"));
+    let database = session.introspect().await.expect("introspect");
+    execute(&session, "DROP SCHEMA introspect_test CASCADE").await;
 
-    execute(&session, "DROP SCHEMA outline_test CASCADE").await;
+    let schema = database
+        .schemas
+        .iter()
+        .find(|s| s.name == "introspect_test")
+        .expect("schema listed");
+    assert!(
+        database
+            .schemas
+            .iter()
+            .all(|s| s.name != "pg_catalog" && s.name != "information_schema")
+    );
+    assert!(
+        database
+            .extensions
+            .iter()
+            .any(|e| e.name == "pgcrypto" && e.schema == "introspect_test")
+    );
+
+    let names = |items: Vec<&str>| items.into_iter().map(str::to_owned).collect::<Vec<_>>();
+    assert_eq!(
+        names(schema.tables.iter().map(|t| t.name.as_str()).collect()),
+        ["authors", "posts"]
+    );
+
+    let authors = &schema.tables[0];
+    assert_eq!(authors.kind, TableKind::Table);
+    assert_eq!(authors.comment.as_deref(), Some("people who write"));
+    // Dropped columns are gone and the rest keep their order.
+    assert_eq!(
+        authors.columns,
+        [
+            Column {
+                name: "id".into(),
+                data_type: "bigint".into(),
+                nullable: false,
+                default: None,
+                identity: Some(Identity::Always),
+                generated: None,
+                comment: None,
+            },
+            Column {
+                name: "email".into(),
+                data_type: "character varying(255)".into(),
+                nullable: false,
+                default: None,
+                identity: None,
+                generated: None,
+                comment: None,
+            },
+        ]
+    );
+    // NOT NULL is a column property, not a listed constraint (PostgreSQL 18 also
+    // stores it in pg_constraint), and constraint-backed indexes are not listed.
+    assert_eq!(
+        authors
+            .constraints
+            .iter()
+            .map(|c| (c.kind, c.definition.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (ConstraintKind::Unique, "UNIQUE (email)"),
+            (ConstraintKind::PrimaryKey, "PRIMARY KEY (id)")
+        ]
+    );
+    assert!(authors.indexes.is_empty());
+
+    let posts = &schema.tables[1];
+    let column = |name: &str| posts.columns.iter().find(|c| c.name == name).unwrap();
+    assert_eq!(
+        column("id").default.as_deref(),
+        Some("nextval('posts_id_seq'::regclass)")
+    );
+    assert_eq!(column("mood").data_type, "mood");
+    assert_eq!(column("mood").default.as_deref(), Some("'ok'::mood"));
+    assert_eq!(column("title").comment.as_deref(), Some("shown in lists"));
+    assert_eq!(
+        column("title_length").generated.as_deref(),
+        Some("length(title)")
+    );
+    assert_eq!(column("title_length").default, None);
+    assert!(
+        posts
+            .constraints
+            .iter()
+            .any(|c| c.kind == ConstraintKind::ForeignKey
+                && c.definition == "FOREIGN KEY (author_id) REFERENCES authors(id)")
+    );
+    assert!(
+        posts
+            .constraints
+            .iter()
+            .any(|c| c.kind == ConstraintKind::Check)
+    );
+    assert_eq!(posts.indexes.len(), 1);
+    assert_eq!(posts.indexes[0].name, "posts_author_idx");
+    assert!(
+        posts.indexes[0]
+            .definition
+            .starts_with("CREATE INDEX posts_author_idx ON introspect_test.posts")
+    );
+
+    assert_eq!(
+        schema
+            .views
+            .iter()
+            .map(|v| (v.name.as_str(), v.materialized))
+            .collect::<Vec<_>>(),
+        [("post_counts", true), ("recent_posts", false)]
+    );
+    assert_eq!(
+        schema.views[1]
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        ["id", "title"]
+    );
+
+    // pgcrypto's functions belong to the extension and are left out.
+    assert_eq!(
+        schema
+            .functions
+            .iter()
+            .map(|f| (f.name.as_str(), f.arguments.as_str(), f.kind))
+            .collect::<Vec<_>>(),
+        [
+            ("add", "a integer, b integer", FunctionKind::Function),
+            ("touch", "", FunctionKind::Procedure)
+        ]
+    );
+    assert!(
+        schema.functions[0]
+            .definition
+            .starts_with("CREATE OR REPLACE FUNCTION introspect_test.add")
+    );
+
+    // posts_id_seq belongs to the serial column, so only the standalone sequence is listed.
+    assert_eq!(
+        names(schema.sequences.iter().map(|s| s.name.as_str()).collect()),
+        ["invoice_numbers"]
+    );
+    assert_eq!(schema.enums.len(), 1);
+    assert_eq!(schema.enums[0].labels, ["sad", "ok", "happy"]);
+}
+
+#[tokio::test]
+async fn reports_the_current_schema() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    assert_eq!(
+        session.current_schema().await.unwrap().as_deref(),
+        Some("public")
+    );
 }
 
 // Needs no server: nothing listens on port 1.

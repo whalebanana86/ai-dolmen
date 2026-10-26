@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use dolmen_core::Error;
 use dolmen_core::connections::ConnectionStore;
-use dolmen_core::postgres::{ConnectConfig, SchemaOutline, Session, StatementResult};
+use dolmen_core::postgres::{ConnectConfig, Session, StatementResult};
+use dolmen_core::schema::Database;
 use serde::Serialize;
 use tauri::State;
 
@@ -70,12 +71,25 @@ pub async fn pg_execute(
     sessions.get(session_id)?.execute(&sql, MAX_ROWS).await
 }
 
+/// The database structure, for the schema tree and completion.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Introspection {
+    /// The schema unqualified names resolve to first, usually `public`.
+    default_schema: Option<String>,
+    database: Database,
+}
+
 #[tauri::command]
-pub async fn pg_schema_outline(
+pub async fn pg_introspect(
     session_id: u64,
     sessions: State<'_, Sessions>,
-) -> Result<SchemaOutline, Error> {
-    sessions.get(session_id)?.schema_outline().await
+) -> Result<Introspection, Error> {
+    let session = sessions.get(session_id)?;
+    Ok(Introspection {
+        default_schema: session.current_schema().await?,
+        database: session.introspect().await?,
+    })
 }
 
 #[tauri::command]

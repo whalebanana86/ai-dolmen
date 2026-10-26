@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import {
-  SchemaOutline,
+  Introspection,
   SessionInfo,
   StatementResult,
   TextRange,
@@ -11,7 +11,9 @@ import {
   sqlText,
 } from "./api";
 import { ResultView } from "./ResultView";
+import { SchemaTree } from "./SchemaTree";
 import { SqlEditor } from "./SqlEditor";
+import { quoteIdent } from "./sqlIdent";
 
 const INITIAL_SQL = "SELECT version();\n";
 
@@ -40,17 +42,20 @@ interface Props {
 export function QueryPanel({ session, onDisconnect }: Props) {
   const viewRef = useRef<EditorView | null>(null);
   const [hasText, setHasText] = useState(INITIAL_SQL.trim() !== "");
-  const [outline, setOutline] = useState<SchemaOutline | null>(null);
+  const [introspection, setIntrospection] = useState<Introspection | null>(null);
+  const [loadingSchema, setLoadingSchema] = useState(false);
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const runCount = useRef(0);
 
-  const refreshOutline = useCallback(() => {
-    pg.schemaOutline(session.id)
-      .then(setOutline)
-      .catch((error) => console.error("loading tables for completion failed", error));
+  const refreshSchema = useCallback(() => {
+    setLoadingSchema(true);
+    pg.introspect(session.id)
+      .then(setIntrospection)
+      .catch((error) => console.error("loading the database structure failed", error))
+      .finally(() => setLoadingSchema(false));
   }, [session.id]);
-  useEffect(refreshOutline, [refreshOutline]);
+  useEffect(refreshSchema, [refreshSchema]);
 
   async function run() {
     const view = viewRef.current;
@@ -83,8 +88,26 @@ export function QueryPanel({ session, onDisconnect }: Props) {
       elapsedMs: performance.now() - started,
     });
     setRunning(false);
-    // DDL such as CREATE TABLE returns no rows; reload what completion knows about.
-    if (results.some((result) => result.kind === "command")) refreshOutline();
+    // DDL such as CREATE TABLE returns no rows; reload the tree and completion.
+    if (results.some((result) => result.kind === "command")) refreshSchema();
+  }
+
+  /** Adds a query for the table at the end of the editor and runs it. */
+  function openTable(schema: string, name: string) {
+    const view = viewRef.current;
+    if (!view || running) return;
+    const qualified =
+      schema === introspection?.defaultSchema ? quoteIdent(name) : `${quoteIdent(schema)}.${quoteIdent(name)}`;
+    const doc = view.state.doc;
+    const separator = doc.length === 0 || doc.toString().endsWith("\n") ? "" : "\n";
+    const start = doc.length + separator.length;
+    view.dispatch({
+      changes: { from: doc.length, insert: `${separator}SELECT * FROM ${qualified} LIMIT 1000;\n` },
+      selection: { anchor: start },
+      scrollIntoView: true,
+    });
+    view.focus();
+    run();
   }
 
   function cancel() {
@@ -118,30 +141,40 @@ export function QueryPanel({ session, onDisconnect }: Props) {
         <button onClick={disconnect}>Disconnect</button>
       </div>
 
-      <SqlEditor
-        initialValue={INITIAL_SQL}
-        outline={outline}
-        onRun={run}
-        onChange={(value) => setHasText(value.trim() !== "")}
-        viewRef={viewRef}
-      />
+      <div className="workspace-body">
+        <SchemaTree
+          introspection={introspection}
+          loading={loadingSchema}
+          onRefresh={refreshSchema}
+          onOpen={openTable}
+        />
+        <div className="workspace-main">
+          <SqlEditor
+            initialValue={INITIAL_SQL}
+            introspection={introspection}
+            onRun={run}
+            onChange={(value) => setHasText(value.trim() !== "")}
+            viewRef={viewRef}
+          />
 
-      <section className="results">
-        {running && <p className="muted status">Running…</p>}
-        {!running && outcome && (
-          <>
-            <p className="muted status">
-              Line {outcome.firstLine} · {outcome.results.length} of {outcome.statementCount}{" "}
-              {outcome.statementCount === 1 ? "statement" : "statements"} ·{" "}
-              {Math.round(outcome.elapsedMs)} ms
-            </p>
-            {outcome.results.map((result, index) => (
-              <ResultView key={`${outcome.runId}-${index}`} index={index} result={result} />
-            ))}
-            {outcome.failure && <ErrorView {...outcome.failure} />}
-          </>
-        )}
-      </section>
+          <section className="results">
+            {running && <p className="muted status">Running…</p>}
+            {!running && outcome && (
+              <>
+                <p className="muted status">
+                  Line {outcome.firstLine} · {outcome.results.length} of {outcome.statementCount}{" "}
+                  {outcome.statementCount === 1 ? "statement" : "statements"} ·{" "}
+                  {Math.round(outcome.elapsedMs)} ms
+                </p>
+                {outcome.results.map((result, index) => (
+                  <ResultView key={`${outcome.runId}-${index}`} index={index} result={result} />
+                ))}
+                {outcome.failure && <ErrorView {...outcome.failure} />}
+              </>
+            )}
+          </section>
+        </div>
+      </div>
     </main>
   );
 }

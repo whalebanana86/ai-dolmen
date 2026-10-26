@@ -31,7 +31,7 @@ pub fn run() {
             connections::connections_delete,
             pg::pg_connect,
             pg::pg_execute,
-            pg::pg_schema_outline,
+            pg::pg_introspect,
             pg::pg_cancel,
             pg::pg_disconnect,
             sql::sql_statement_at,

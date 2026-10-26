@@ -29,16 +29,80 @@ export type StatementResult =
     }
   | { kind: "command"; rowsAffected: number };
 
-export interface TableOutline {
-  schema: string;
+// The database structure, mirroring dolmen_core::schema. Lists are sorted by name.
+
+export interface Column {
   name: string;
-  columns: string[];
+  /** The type as PostgreSQL writes it, e.g. "character varying(255)". */
+  dataType: string;
+  nullable: boolean;
+  default: string | null;
+  identity: "always" | "byDefault" | null;
+  /** The expression of a generated column. */
+  generated: string | null;
+  comment: string | null;
 }
 
-export interface SchemaOutline {
+export type ConstraintKind = "primaryKey" | "unique" | "check" | "foreignKey" | "exclusion";
+
+export interface Constraint {
+  name: string;
+  kind: ConstraintKind;
+  /** e.g. "PRIMARY KEY (id)" */
+  definition: string;
+}
+
+export interface Index {
+  name: string;
+  /** The full CREATE INDEX statement. */
+  definition: string;
+}
+
+export interface Table {
+  name: string;
+  kind: "table" | "partitioned" | "foreign";
+  columns: Column[];
+  constraints: Constraint[];
+  /** Indexes that don't back a primary key, unique or exclusion constraint. */
+  indexes: Index[];
+  comment: string | null;
+}
+
+export interface View {
+  name: string;
+  materialized: boolean;
+  columns: Column[];
+  definition: string;
+  comment: string | null;
+}
+
+export interface SqlFunction {
+  name: string;
+  /** Identifies the function among overloads, e.g. "a integer, b text". */
+  arguments: string;
+  kind: "function" | "procedure";
+  definition: string;
+}
+
+export interface Schema {
+  name: string;
+  tables: Table[];
+  views: View[];
+  functions: SqlFunction[];
+  /** Sequences not owned by a serial or identity column. */
+  sequences: { name: string }[];
+  enums: { name: string; labels: string[] }[];
+}
+
+export interface Database {
+  schemas: Schema[];
+  extensions: { name: string; schema: string }[];
+}
+
+export interface Introspection {
   /** The schema unqualified names resolve to first, usually "public". */
-  defaultSchema: string;
-  tables: TableOutline[];
+  defaultSchema: string | null;
+  database: Database;
 }
 
 export type AppError =
@@ -65,7 +129,7 @@ export const pg = {
     invoke<SessionInfo>("pg_connect", { config, savedId }),
   execute: (sessionId: number, sql: string) =>
     invoke<StatementResult[]>("pg_execute", { sessionId, sql }),
-  schemaOutline: (sessionId: number) => invoke<SchemaOutline>("pg_schema_outline", { sessionId }),
+  introspect: (sessionId: number) => invoke<Introspection>("pg_introspect", { sessionId }),
   cancel: (sessionId: number) => invoke<void>("pg_cancel", { sessionId }),
   disconnect: (sessionId: number) => invoke<void>("pg_disconnect", { sessionId }),
 };

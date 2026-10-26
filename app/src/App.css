@@ -249,6 +249,113 @@ button.danger {
   background: var(--surface);
 }
 
+.workspace-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Schema tree */
+
+.schema-tree {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.schema-tree-header {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.schema-filter {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+}
+
+.schema-tree-header button {
+  padding: 2px 8px;
+}
+
+.schema-tree-body {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.tree-message {
+  padding: 4px 12px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding-right: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+.tree-row:hover {
+  background: var(--active-line);
+}
+
+.tree-caret {
+  width: 10px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.tree-badge {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--selection-match);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+.tree-badge.empty {
+  background: none;
+}
+
+/* Names stay whole; the detail (a type, a signature) gives way when space runs out. */
+.tree-label {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
 .spacer {
   flex: 1;
 }
