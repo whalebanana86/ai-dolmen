@@ -6,7 +6,7 @@ use std::process::Command;
 use dolmen_core::Error;
 use dolmen_core::postgres::Session;
 use dolmen_core::schema::{Column, Database, EnumType, Schema, Table, TableKind, View};
-use dolmen_core::snapshot::{ChangeKind, MARKER, Snapshot};
+use dolmen_core::snapshot::{ChangeKind, MARKER, MODEL_FILE, Snapshot};
 use dolmen_core::{git, schema};
 use tempfile::TempDir;
 
@@ -106,7 +106,11 @@ fn writes_reads_and_replaces_snapshots() {
     let first = Snapshot::of(&database());
     first.write(&folder).unwrap();
     assert!(folder.join(MARKER).exists());
-    assert_eq!(Snapshot::read(&folder).unwrap(), first);
+    assert!(folder.join(MODEL_FILE).exists());
+    // Reading it back gives the same files and the same model.
+    let read = Snapshot::read(&folder).unwrap();
+    assert_eq!(read, first);
+    assert_eq!(read.model(), Some(&database()));
 
     // Drop the app schema's enum and change the users table.
     let mut changed = database();
@@ -138,6 +142,27 @@ fn writes_reads_and_replaces_snapshots() {
     // The emptied types folder is gone too.
     assert!(!folder.join("app/types").exists());
     assert!(second.changes(&Snapshot::read(&folder).unwrap()).is_empty());
+}
+
+#[test]
+fn reads_snapshots_written_before_models_and_rejects_newer_formats() {
+    let dir = TempDir::new().unwrap();
+    Snapshot::of(&database()).write(dir.path()).unwrap();
+
+    std::fs::remove_file(dir.path().join(MODEL_FILE)).unwrap();
+    let old = Snapshot::read(dir.path()).unwrap();
+    assert_eq!(old.model(), None);
+    assert!(!old.files().is_empty());
+
+    std::fs::write(
+        dir.path().join(MODEL_FILE),
+        r#"{"format": 99, "database": {}}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        Snapshot::read(dir.path()),
+        Err(Error::Storage { .. })
+    ));
 }
 
 #[test]
@@ -311,6 +336,10 @@ fn reads_history_and_past_snapshots() {
     assert!(history[2].parents.is_empty());
 
     assert_eq!(git::snapshot_at(&folder, "v1").unwrap(), first);
+    assert_eq!(
+        git::snapshot_at(&folder, "v1").unwrap().model(),
+        Some(&database())
+    );
     assert_eq!(git::snapshot_at(&folder, "HEAD").unwrap(), second);
     assert!(git::snapshot_at(&folder, "--output=/tmp/x").is_err());
 }

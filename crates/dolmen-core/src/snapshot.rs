@@ -12,6 +12,10 @@
 //! <schema>/types/<name>.sql
 //! ```
 //!
+//! Next to the DDL, `dolmen-model.json` holds the schema model the files were
+//! written from, so a past snapshot can be applied to a database exactly,
+//! without parsing SQL.
+//!
 //! The folder holds a `.dolmen-snapshot` marker. Dolmen only writes into empty
 //! folders or folders with the marker, so it never deletes files it doesn't own.
 
@@ -20,7 +24,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use similar::TextDiff;
 
 use crate::Error;
@@ -28,13 +32,26 @@ use crate::postgres::ddl;
 use crate::schema::Database;
 
 pub const MARKER: &str = ".dolmen-snapshot";
+pub const MODEL_FILE: &str = "dolmen-model.json";
+const MODEL_FORMAT: u32 = 1;
+/// Marks the model as generated, so GitHub collapses it in pull request diffs.
+const GITATTRIBUTES: &str = "dolmen-model.json linguist-generated=true\n";
 const MARKER_TEXT: &str = "This folder is a Dolmen schema snapshot. Its .sql files are regenerated \
 from the database, so change the database rather than editing them.\n";
 
-/// Snapshot files keyed by their path relative to the snapshot folder, with `/` separators.
+/// Snapshot files keyed by their path relative to the snapshot folder, with
+/// `/` separators, and the model they were written from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Snapshot {
     files: BTreeMap<String, String>,
+    /// `None` for snapshots written before Dolmen saved models.
+    model: Option<Database>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ModelFile {
+    format: u32,
+    database: Database,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -109,16 +126,31 @@ impl Snapshot {
                 );
             }
         }
-        Self { files }
+        Self {
+            files,
+            model: Some(database.clone()),
+        }
     }
 
-    /// A snapshot from files read elsewhere, such as from a Git commit.
-    pub fn from_files(files: BTreeMap<String, String>) -> Self {
-        Self { files }
+    /// A snapshot from files read elsewhere, such as from a Git commit, with
+    /// the contents of its model file if it has one.
+    pub fn from_files(
+        files: BTreeMap<String, String>,
+        model_json: Option<&str>,
+    ) -> Result<Self, Error> {
+        let model = model_json
+            .map(|json| parse_model(json).map_err(|err| storage(format!("{MODEL_FILE}: {err}"))))
+            .transpose()?;
+        Ok(Self { files, model })
     }
 
     pub fn files(&self) -> &BTreeMap<String, String> {
         &self.files
+    }
+
+    /// The schema model the snapshot was written from.
+    pub fn model(&self) -> Option<&Database> {
+        self.model.as_ref()
     }
 
     /// Reads the snapshot in `dir`. A missing folder is an empty snapshot.
@@ -128,10 +160,16 @@ impl Snapshot {
             let content = fs::read_to_string(&path).map_err(|err| io_error(&path, err))?;
             files.insert(relative(dir, &path), content);
         }
-        Ok(Self { files })
+        let model_path = dir.join(MODEL_FILE);
+        let model_json = match fs::read_to_string(&model_path) {
+            Ok(json) => Some(json),
+            Err(err) if err.kind() == ErrorKind::NotFound => None,
+            Err(err) => return Err(io_error(&model_path, err)),
+        };
+        Self::from_files(files, model_json.as_deref())
     }
 
-    /// What changes from this snapshot to `newer`, sorted by path.
+    /// What changes in the DDL files from this snapshot to `newer`, sorted by path.
     pub fn changes(&self, newer: &Snapshot) -> Vec<FileChange> {
         let paths: std::collections::BTreeSet<&String> =
             self.files.keys().chain(newer.files.keys()).collect();
@@ -178,18 +216,18 @@ impl Snapshot {
         fs::create_dir_all(dir).map_err(|err| io_error(dir, err))?;
         if !marker.exists() {
             fs::write(&marker, MARKER_TEXT).map_err(|err| io_error(&marker, err))?;
+            let attributes = dir.join(".gitattributes");
+            if !attributes.exists() {
+                fs::write(&attributes, GITATTRIBUTES).map_err(|err| io_error(&attributes, err))?;
+            }
+        }
+        if let Some(database) = &self.model {
+            write_if_changed(&dir.join(MODEL_FILE), &model_json(database))?;
         }
 
         let existing = Snapshot::read(dir)?;
         for (path, content) in &self.files {
-            if existing.files.get(path) == Some(content) {
-                continue;
-            }
-            let file = dir.join(path);
-            if let Some(parent) = file.parent() {
-                fs::create_dir_all(parent).map_err(|err| io_error(parent, err))?;
-            }
-            fs::write(&file, content).map_err(|err| io_error(&file, err))?;
+            write_if_changed(&dir.join(path), content)?;
         }
         for path in existing
             .files
@@ -202,6 +240,43 @@ impl Snapshot {
         remove_empty_dirs(dir)?;
         Ok(())
     }
+}
+
+/// The model file's contents: pretty-printed, so Git can diff it line by line.
+fn model_json(database: &Database) -> String {
+    let file = ModelFile {
+        format: MODEL_FORMAT,
+        database: database.clone(),
+    };
+    let mut json = serde_json::to_string_pretty(&file).expect("the model serializes");
+    json.push('\n');
+    json
+}
+
+fn parse_model(json: &str) -> Result<Database, String> {
+    let file: ModelFile = serde_json::from_str(json).map_err(|err| err.to_string())?;
+    if file.format != MODEL_FORMAT {
+        return Err(format!(
+            "format {} needs a newer Dolmen (this one reads format {MODEL_FORMAT})",
+            file.format
+        ));
+    }
+    Ok(file.database)
+}
+
+/// Writes `content` unless the file already holds it, creating folders as needed.
+fn write_if_changed(file: &Path, content: &str) -> Result<(), Error> {
+    if fs::read_to_string(file).is_ok_and(|existing| existing == content) {
+        return Ok(());
+    }
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent).map_err(|err| io_error(parent, err))?;
+    }
+    fs::write(file, content).map_err(|err| io_error(file, err))
+}
+
+fn storage(message: String) -> Error {
+    Error::Storage { message }
 }
 
 /// A file name for an object name. Lower-case ASCII letters, digits, `_`, `-`

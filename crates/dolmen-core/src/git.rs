@@ -9,7 +9,7 @@ use std::process::{Command, Output, Stdio};
 use serde::Serialize;
 
 use crate::Error;
-use crate::snapshot::Snapshot;
+use crate::snapshot::{MODEL_FILE, Snapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Repository {
@@ -220,6 +220,7 @@ pub fn snapshot_at(dir: &Path, rev: &str) -> Result<Snapshot, Error> {
 
     // Entries look like "<mode> blob <oid>\t<path>".
     let mut blobs = Vec::new();
+    let mut model_blob = None;
     for entry in listing.stdout.split(|&b| b == 0).filter(|e| !e.is_empty()) {
         let entry = String::from_utf8_lossy(entry);
         let Some((meta, path)) = entry.split_once('\t') else {
@@ -234,16 +235,24 @@ pub fn snapshot_at(dir: &Path, rev: &str) -> Result<Snapshot, Error> {
         };
         if relative.ends_with(".sql") {
             blobs.push((relative.to_owned(), oid.to_owned()));
+        } else if relative == MODEL_FILE {
+            model_blob = Some(oid.to_owned());
         }
     }
 
-    let contents = read_blobs(dir, blobs.iter().map(|(_, oid)| oid.as_str()))?;
+    // The model, if any, is read last in the same batch.
+    let oids = blobs
+        .iter()
+        .map(|(_, oid)| oid.as_str())
+        .chain(model_blob.as_deref());
+    let mut contents = read_blobs(dir, oids)?;
+    let model_json = model_blob.and_then(|_| contents.pop());
     let files: BTreeMap<String, String> = blobs
         .into_iter()
         .map(|(path, _)| path)
         .zip(contents)
         .collect();
-    Ok(Snapshot::from_files(files))
+    Snapshot::from_files(files, model_json.as_deref())
 }
 
 /// Reads blobs in one `git cat-file --batch` process rather than one per file.
