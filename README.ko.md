@@ -42,6 +42,15 @@ pnpm tauri dev
 cargo run -p dolmen-cli -- --help
 ```
 
+개발·테스트용 로컬 PostgreSQL (Docker 필요):
+
+```sh
+docker compose up -d   # localhost:55432에 PostgreSQL 18, 사용자·비밀번호 "postgres"
+DOLMEN_TEST_PG_HOST=localhost DOLMEN_TEST_PG_PORT=55432 cargo test
+```
+
+`DOLMEN_TEST_PG_HOST`가 없으면 서버가 필요한 테스트는 건너뜁니다.
+
 ## 저장소 구조
 
 ```

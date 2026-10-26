@@ -1,0 +1,70 @@
+use serde::Serialize;
+
+/// Errors returned by database sessions.
+///
+/// Serialized with a `kind` tag so the app can show server errors (with their
+/// SQLSTATE code and position) differently from connection problems.
+#[derive(Debug, thiserror::Error, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum Error {
+    /// The server rejected a statement or a login, e.g. a syntax error or a wrong password.
+    #[error("{message}")]
+    Database {
+        message: String,
+        /// SQLSTATE code, e.g. `42601` for a syntax error.
+        code: String,
+        detail: Option<String>,
+        hint: Option<String>,
+        /// 1-based character position of the error in the submitted SQL.
+        position: Option<u32>,
+    },
+    /// Connecting to or communicating with the server failed.
+    #[error("{message}")]
+    Connection { message: String },
+    /// The session is closed.
+    #[error("connection is closed")]
+    Closed,
+}
+
+impl From<tokio_postgres::Error> for Error {
+    fn from(err: tokio_postgres::Error) -> Self {
+        if let Some(db) = err.as_db_error() {
+            return Error::Database {
+                message: db.message().to_owned(),
+                code: db.code().code().to_owned(),
+                detail: db.detail().map(str::to_owned),
+                hint: db.hint().map(str::to_owned),
+                position: match db.position() {
+                    Some(tokio_postgres::error::ErrorPosition::Original(position)) => {
+                        Some(*position)
+                    }
+                    _ => None,
+                },
+            };
+        }
+        if err.is_closed() {
+            return Error::Closed;
+        }
+        Error::Connection {
+            message: error_chain(&err),
+        }
+    }
+}
+
+/// Joins an error with its sources, e.g. "error connecting to server: Connection refused".
+///
+/// tokio-postgres errors only describe their kind, so the cause is needed to be useful.
+fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut message = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
+}

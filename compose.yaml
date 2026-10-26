@@ -1,0 +1,13 @@
+# Local PostgreSQL for development and integration tests:
+#
+#   docker compose up -d
+#   DOLMEN_TEST_PG_HOST=localhost DOLMEN_TEST_PG_PORT=55432 cargo test
+#
+# Connect from the app with localhost:55432, user and password `postgres`.
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "55432:5432"

@@ -42,6 +42,15 @@ pnpm tauri dev
 cargo run -p dolmen-cli -- --help
 ```
 
+A local PostgreSQL for development and tests (Docker required):
+
+```sh
+docker compose up -d   # PostgreSQL 18 on localhost:55432, user and password "postgres"
+DOLMEN_TEST_PG_HOST=localhost DOLMEN_TEST_PG_PORT=55432 cargo test
+```
+
+Without `DOLMEN_TEST_PG_HOST`, tests that need a server are skipped.
+
 ## Repository layout
 
 ```

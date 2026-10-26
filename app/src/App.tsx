@@ -1,19 +1,16 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
+import { SessionInfo } from "./api";
+import { ConnectionForm } from "./ConnectionForm";
+import { QueryPanel } from "./QueryPanel";
 import "./App.css";
 
 function App() {
-  const [version, setVersion] = useState("");
+  const [session, setSession] = useState<SessionInfo | null>(null);
 
-  useEffect(() => {
-    invoke<string>("app_version").then(setVersion);
-  }, []);
-
-  return (
-    <main className="container">
-      <h1>Dolmen</h1>
-      {version && <p className="version">v{version}</p>}
-    </main>
+  return session ? (
+    <QueryPanel session={session} onDisconnect={() => setSession(null)} />
+  ) : (
+    <ConnectionForm onConnected={setSession} />
   );
 }
 
