@@ -21,6 +21,8 @@ interface Location {
 }
 
 interface Outcome {
+  /** Distinguishes runs, so result grids start fresh instead of keeping old column widths. */
+  runId: number;
   /** Results of the statements that succeeded, in order. */
   results: StatementResult[];
   /** The error that stopped the run, if any. */
@@ -41,6 +43,7 @@ export function QueryPanel({ session, onDisconnect }: Props) {
   const [outline, setOutline] = useState<SchemaOutline | null>(null);
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const runCount = useRef(0);
 
   const refreshOutline = useCallback(() => {
     pg.schemaOutline(session.id)
@@ -72,6 +75,7 @@ export function QueryPanel({ session, onDisconnect }: Props) {
       }
     }
     setOutcome({
+      runId: ++runCount.current,
       results,
       failure,
       statementCount: ranges.length,
@@ -132,7 +136,7 @@ export function QueryPanel({ session, onDisconnect }: Props) {
               {Math.round(outcome.elapsedMs)} ms
             </p>
             {outcome.results.map((result, index) => (
-              <ResultView key={index} index={index} result={result} />
+              <ResultView key={`${outcome.runId}-${index}`} index={index} result={result} />
             ))}
             {outcome.failure && <ErrorView {...outcome.failure} />}
           </>

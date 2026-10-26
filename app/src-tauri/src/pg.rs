@@ -11,7 +11,8 @@ use serde::Serialize;
 use tauri::State;
 
 /// Rows sent to the UI per result set; the rest are counted but not transferred.
-const MAX_ROWS: usize = 1000;
+/// The result grid only renders the rows in view, so this is bound by memory, not DOM size.
+const MAX_ROWS: usize = 10_000;
 
 /// Open database sessions, keyed by an id handed to the UI.
 #[derive(Default)]
