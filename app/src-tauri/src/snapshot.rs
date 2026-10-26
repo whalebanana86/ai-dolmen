@@ -3,12 +3,12 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use dolmen_core::Error;
 use dolmen_core::git::{self, Commit, Repository};
 use dolmen_core::postgres::ddl::{self, SchemaObject};
 use dolmen_core::postgres::migrate::{self, Plan, Rename};
 use dolmen_core::schema::Database;
 use dolmen_core::snapshot::{ChangeKind, FileChange, MARKER, MODEL_FILE, Snapshot};
+use dolmen_core::{Error, Refusal};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
@@ -50,6 +50,7 @@ pub async fn snapshot_checkout(
             .all(|c| matches!(c, Component::Normal(_)))
     {
         return Err(refused(
+            Refusal::BadSnapshotPath,
             "The snapshot folder must be a path inside the repository, such as db/schema.",
         ));
     }
@@ -76,6 +77,12 @@ pub async fn snapshot_checkout(
         clone: clone.to_string_lossy().into_owned(),
         updated,
     })
+}
+
+/// SSH addresses to suggest for an HTTPS repository URL; see [`git::ssh_alternatives`].
+#[tauri::command]
+pub fn snapshot_ssh_alternatives(url: String) -> Vec<String> {
+    git::ssh_alternatives(&url)
 }
 
 #[derive(Serialize)]
@@ -208,6 +215,7 @@ pub async fn snapshot_apply(
     let session = sessions.get(session_id)?;
     if !session.is_local() {
         return Err(refused(
+            Refusal::NotLocal,
             "Only local databases (localhost, a loopback address or a Unix socket) can be changed from a snapshot.",
         ));
     }
@@ -215,16 +223,19 @@ pub async fn snapshot_apply(
     let plan = migrate::plan(&session.introspect().await?, &target, &renames);
     if !plan.steps.iter().map(|step| &step.sql).eq(reviewed.iter()) {
         return Err(refused(
+            Refusal::PlanChanged,
             "The database or the snapshot changed since you reviewed the plan; review it again.",
         ));
     }
     if !plan.blockers.is_empty() {
         return Err(refused(
+            Refusal::PlanBlocked,
             "The plan has changes Dolmen can't make; see the plan.",
         ));
     }
     if plan.is_destructive() && !allow_destructive {
         return Err(refused(
+            Refusal::DestructiveNotAllowed,
             "The plan drops data or changes column types; allow that explicitly to apply it.",
         ));
     }
@@ -236,15 +247,18 @@ fn target_model(dir: &Path, rev: Option<&str>) -> Result<Database, Error> {
         Some(rev) => git::snapshot_at(dir, rev)?,
         None => Snapshot::read(dir)?,
     };
-    snapshot.model().cloned().ok_or_else(|| Error::Storage {
-        message: "This snapshot has no dolmen-model.json, so it can't be applied: it was written \
-                  before Dolmen saved models. Write and commit a new snapshot to apply it later."
-            .into(),
+    snapshot.model().cloned().ok_or_else(|| {
+        refused(
+            Refusal::NoModel,
+            "This snapshot has no dolmen-model.json, so it can't be applied: it was written \
+             before Dolmen saved models. Write and commit a new snapshot to apply it later.",
+        )
     })
 }
 
-fn refused(message: &str) -> Error {
+fn refused(reason: Refusal, message: &str) -> Error {
     Error::Refused {
+        reason,
         message: message.into(),
     }
 }

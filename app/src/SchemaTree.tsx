@@ -11,6 +11,8 @@ import {
   View,
 } from "./api";
 import { ContextMenu, MenuItem } from "./ContextMenu";
+import type { Messages } from "./i18n/en";
+import { useT } from "./settings";
 import { quoteIdent } from "./sqlIdent";
 
 /** What the tree's menus can do in the workspace. */
@@ -36,6 +38,7 @@ type OpenMenu = (event: MouseEvent, items: MenuItem[]) => void;
  * Right-click a node for its actions; double-click a table or view to query it.
  */
 export function SchemaTree({ introspection, loading, actions }: Props) {
+  const t = useT();
   const [filter, setFilter] = useState("");
   // Node keys the user toggled; the default schema starts open, everything else closed.
   const [toggled, setToggled] = useState<Set<string>>(new Set());
@@ -64,16 +67,18 @@ export function SchemaTree({ introspection, loading, actions }: Props) {
       <div className="schema-tree-header">
         <input
           className="schema-filter"
-          placeholder="Filter"
+          placeholder={t.tree.filter}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        <button onClick={actions.refresh} disabled={loading} title="Reload the database structure">
+        <button onClick={actions.refresh} disabled={loading} title={t.tree.reload}>
           ↻
         </button>
       </div>
       <div className="schema-tree-body">
-        {!introspection && <p className="muted tree-message">{loading ? "Loading…" : "Not loaded"}</p>}
+        {!introspection && (
+          <p className="muted tree-message">{loading ? t.common.loading : t.tree.notLoaded}</p>
+        )}
         {introspection?.database.schemas.map((schema) => {
           const key = `schema:${schema.name}`;
           const filtered = query ? filterSchema(schema, matches) : schema;
@@ -88,11 +93,11 @@ export function SchemaTree({ introspection, loading, actions }: Props) {
                 onToggle={() => toggle(key)}
                 onContextMenu={(e) =>
                   openMenu(e, [
-                    copyItem("Copy name", schema.name),
-                    { label: "Refresh", onSelect: actions.refresh },
+                    copyItem(t.tree.menu.copyName, schema.name),
+                    { label: t.tree.menu.refresh, onSelect: actions.refresh },
                     { separator: true },
                     {
-                      label: "Drop schema…",
+                      label: t.tree.menu.dropSchema,
                       danger: true,
                       onSelect: () => actions.insert(`DROP SCHEMA ${quoteIdent(schema.name)};`, false),
                     },
@@ -132,6 +137,7 @@ interface ChildrenProps {
 }
 
 function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, sql }: ChildrenProps) {
+  const t = useT();
   const group = (name: string, count: number, children: () => ReactNode, openByDefault = false) => {
     if (count === 0) return null;
     const key = `group:${schema.name}:${name}`;
@@ -142,7 +148,7 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
           depth={1}
           open={open}
           onToggle={() => toggle(key)}
-          onContextMenu={(e) => openMenu(e, [{ label: "Refresh", onSelect: actions.refresh }])}
+          onContextMenu={(e) => openMenu(e, [{ label: t.tree.menu.refresh, onSelect: actions.refresh }])}
           label={name}
           detail={String(count)}
         />
@@ -155,7 +161,7 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
   return (
     <>
       {group(
-        "Tables",
+        t.tree.groups.tables,
         schema.tables.length,
         () =>
           schema.tables.map((table) => (
@@ -168,7 +174,7 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
           )),
         true,
       )}
-      {group("Views", schema.views.length, () =>
+      {group(t.tree.groups.views, schema.views.length, () =>
         schema.views.map((view) => (
           <RelationNode
             key={view.name}
@@ -178,7 +184,7 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
           />
         )),
       )}
-      {group("Functions", schema.functions.length, () =>
+      {group(t.tree.groups.functions, schema.functions.length, () =>
         schema.functions.map((fn) => (
           <TreeRow
             key={`${fn.name}(${fn.arguments})`}
@@ -187,11 +193,11 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
             label={fn.name}
             detail={`(${fn.arguments})`}
             title={fn.definition}
-            onContextMenu={(e) => openMenu(e, functionMenu(schema.name, fn, actions, sql))}
+            onContextMenu={(e) => openMenu(e, functionMenu(schema.name, fn, actions, sql, t))}
           />
         )),
       )}
-      {group("Sequences", schema.sequences.length, () =>
+      {group(t.tree.groups.sequences, schema.sequences.length, () =>
         schema.sequences.map((sequence) => {
           const name = sql.name(schema.name, sequence.name);
           return (
@@ -203,25 +209,25 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
               onContextMenu={(e) =>
                 openMenu(e, [
                   {
-                    label: "Show current value",
+                    label: t.tree.menu.showCurrentValue,
                     onSelect: () => actions.insert(`SELECT last_value, is_called FROM ${name};`, true),
                   },
                   {
-                    label: "Show DDL",
+                    label: t.tree.menu.showDdl,
                     onSelect: () => actions.showDdl(schema.name, { type: "sequence", ...sequence }),
                   },
                   { separator: true },
-                  copyItem("Copy name", sequence.name),
-                  copyItem("Copy qualified name", sql.qualified(schema.name, sequence.name)),
+                  copyItem(t.tree.menu.copyName, sequence.name),
+                  copyItem(t.tree.menu.copyQualifiedName, sql.qualified(schema.name, sequence.name)),
                   { separator: true },
-                  dropItem(`DROP SEQUENCE ${name};`, actions),
+                  dropItem(`DROP SEQUENCE ${name};`, actions, t),
                 ])
               }
             />
           );
         }),
       )}
-      {group("Enums", schema.enums.length, () =>
+      {group(t.tree.groups.enums, schema.enums.length, () =>
         schema.enums.map((type) => (
           <TreeRow
             key={type.name}
@@ -231,12 +237,12 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
             detail={type.labels.join(", ")}
             onContextMenu={(e) =>
               openMenu(e, [
-                { label: "Show DDL", onSelect: () => actions.showDdl(schema.name, { type: "enum", ...type }) },
+                { label: t.tree.menu.showDdl, onSelect: () => actions.showDdl(schema.name, { type: "enum", ...type }) },
                 { separator: true },
-                copyItem("Copy name", type.name),
-                copyItem("Copy qualified name", sql.qualified(schema.name, type.name)),
+                copyItem(t.tree.menu.copyName, type.name),
+                copyItem(t.tree.menu.copyQualifiedName, sql.qualified(schema.name, type.name)),
                 { separator: true },
-                dropItem(`DROP TYPE ${sql.name(schema.name, type.name)};`, actions),
+                dropItem(`DROP TYPE ${sql.name(schema.name, type.name)};`, actions, t),
               ])
             }
           />
@@ -258,6 +264,7 @@ interface RelationProps {
 }
 
 function RelationNode({ schema, relation, badge, isOpen, toggle, openMenu, actions, sql }: RelationProps) {
+  const t = useT();
   const key = `relation:${schema}:${relation.name}`;
   const open = isOpen(key);
   const table = "constraints" in relation ? relation : null;
@@ -271,10 +278,10 @@ function RelationNode({ schema, relation, badge, isOpen, toggle, openMenu, actio
         open={open}
         onToggle={() => toggle(key)}
         onDoubleClick={() => actions.insert(`SELECT * FROM ${name} LIMIT 1000;`, true)}
-        onContextMenu={(e) => openMenu(e, relationMenu(schema, relation, actions, sql))}
+        onContextMenu={(e) => openMenu(e, relationMenu(schema, relation, actions, sql, t))}
         badge={badge}
         label={relation.name}
-        title={[relation.comment, "Double-click to query"].filter(Boolean).join("\n")}
+        title={[relation.comment, t.tree.doubleClickToQuery].filter(Boolean).join("\n")}
       />
       {open && (
         <>
@@ -289,7 +296,7 @@ function RelationNode({ schema, relation, badge, isOpen, toggle, openMenu, actio
               onContextMenu={(e) =>
                 openMenu(e, [
                   {
-                    label: "Show value counts",
+                    label: t.tree.menu.showValueCounts,
                     onSelect: () => {
                       const col = quoteIdent(column.name);
                       actions.insert(
@@ -299,7 +306,7 @@ function RelationNode({ schema, relation, badge, isOpen, toggle, openMenu, actio
                     },
                   },
                   { separator: true },
-                  copyItem("Copy name", column.name),
+                  copyItem(t.tree.menu.copyName, column.name),
                 ])
               }
             />
@@ -313,7 +320,7 @@ function RelationNode({ schema, relation, badge, isOpen, toggle, openMenu, actio
                 badge={CONSTRAINT_BADGES[constraint.kind]}
                 label={constraint.name}
                 title={constraint.definition}
-                onContextMenu={(e) => openMenu(e, constraintMenu(name, constraint, actions))}
+                onContextMenu={(e) => openMenu(e, constraintMenu(name, constraint, actions, t))}
               />
             ))}
           {table?.indexes.map((index) => (
@@ -323,7 +330,7 @@ function RelationNode({ schema, relation, badge, isOpen, toggle, openMenu, actio
               badge="IX"
               label={index.name}
               title={index.definition}
-              onContextMenu={(e) => openMenu(e, indexMenu(schema, index, actions, sql))}
+              onContextMenu={(e) => openMenu(e, indexMenu(schema, index, actions, sql, t))}
             />
           ))}
         </>
@@ -332,7 +339,13 @@ function RelationNode({ schema, relation, badge, isOpen, toggle, openMenu, actio
   );
 }
 
-function relationMenu(schema: string, relation: Table | View, actions: TreeActions, sql: SqlFor): MenuItem[] {
+function relationMenu(
+  schema: string,
+  relation: Table | View,
+  actions: TreeActions,
+  sql: SqlFor,
+  t: Messages,
+): MenuItem[] {
   const name = sql.name(schema, relation.name);
   const isTable = "constraints" in relation;
   const materialized = !isTable && relation.materialized;
@@ -342,14 +355,17 @@ function relationMenu(schema: string, relation: Table | View, actions: TreeActio
   const insertable = relation.columns.filter((c) => c.identity !== "always" && !c.generated);
 
   return [
-    { label: "Select rows", onSelect: () => actions.insert(`SELECT * FROM ${name} LIMIT 1000;`, true) },
-    { label: "Count rows", onSelect: () => actions.insert(`SELECT count(*) FROM ${name};`, true) },
+    { label: t.tree.menu.selectRows, onSelect: () => actions.insert(`SELECT * FROM ${name} LIMIT 1000;`, true) },
+    { label: t.tree.menu.countRows, onSelect: () => actions.insert(`SELECT count(*) FROM ${name};`, true) },
     { separator: true },
-    { label: "Generate SELECT", onSelect: () => actions.insert(`SELECT ${columns}\nFROM ${name};`, false) },
+    {
+      label: t.tree.menu.generateSelect,
+      onSelect: () => actions.insert(`SELECT ${columns}\nFROM ${name};`, false),
+    },
     ...(isTable
       ? [
           {
-            label: "Generate INSERT",
+            label: t.tree.menu.generateInsert,
             onSelect: () =>
               actions.insert(
                 `INSERT INTO ${name} (${insertable.map((c) => quoteIdent(c.name)).join(", ")})\n` +
@@ -362,13 +378,13 @@ function relationMenu(schema: string, relation: Table | View, actions: TreeActio
     ...(materialized
       ? [
           {
-            label: "Generate REFRESH",
+            label: t.tree.menu.generateRefresh,
             onSelect: () => actions.insert(`REFRESH MATERIALIZED VIEW ${name};`, false),
           },
         ]
       : []),
     {
-      label: "Show DDL",
+      label: t.tree.menu.showDdl,
       onSelect: () =>
         actions.showDdl(
           schema,
@@ -376,49 +392,49 @@ function relationMenu(schema: string, relation: Table | View, actions: TreeActio
         ),
     },
     { separator: true },
-    copyItem("Copy name", relation.name),
-    copyItem("Copy qualified name", sql.qualified(schema, relation.name)),
+    copyItem(t.tree.menu.copyName, relation.name),
+    copyItem(t.tree.menu.copyQualifiedName, sql.qualified(schema, relation.name)),
     { separator: true },
     ...(isTable
       ? [
           {
-            label: "Truncate…",
+            label: t.tree.menu.truncate,
             danger: true,
             onSelect: () => actions.insert(`TRUNCATE TABLE ${name};`, false),
           },
         ]
       : []),
-    dropItem(`DROP ${kind} ${name};`, actions),
+    dropItem(`DROP ${kind} ${name};`, actions, t),
   ];
 }
 
-function functionMenu(schema: string, fn: SqlFunction, actions: TreeActions, sql: SqlFor): MenuItem[] {
+function functionMenu(schema: string, fn: SqlFunction, actions: TreeActions, sql: SqlFor, t: Messages): MenuItem[] {
   const signature = `${sql.name(schema, fn.name)}(${fn.arguments})`;
   return [
-    { label: "Show definition", onSelect: () => actions.insert(`${fn.definition.trimEnd()};`, false) },
+    { label: t.tree.menu.showDefinition, onSelect: () => actions.insert(`${fn.definition.trimEnd()};`, false) },
     { separator: true },
-    copyItem("Copy name", fn.name),
-    copyItem("Copy signature", signature),
+    copyItem(t.tree.menu.copyName, fn.name),
+    copyItem(t.tree.menu.copySignature, signature),
     { separator: true },
-    dropItem(`DROP ${fn.kind === "procedure" ? "PROCEDURE" : "FUNCTION"} ${signature};`, actions),
+    dropItem(`DROP ${fn.kind === "procedure" ? "PROCEDURE" : "FUNCTION"} ${signature};`, actions, t),
   ];
 }
 
-function constraintMenu(table: string, constraint: Constraint, actions: TreeActions): MenuItem[] {
+function constraintMenu(table: string, constraint: Constraint, actions: TreeActions, t: Messages): MenuItem[] {
   return [
-    copyItem("Copy definition", constraint.definition),
-    copyItem("Copy name", constraint.name),
+    copyItem(t.tree.menu.copyDefinition, constraint.definition),
+    copyItem(t.tree.menu.copyName, constraint.name),
     { separator: true },
-    dropItem(`ALTER TABLE ${table} DROP CONSTRAINT ${quoteIdent(constraint.name)};`, actions),
+    dropItem(`ALTER TABLE ${table} DROP CONSTRAINT ${quoteIdent(constraint.name)};`, actions, t),
   ];
 }
 
-function indexMenu(schema: string, index: Index, actions: TreeActions, sql: SqlFor): MenuItem[] {
+function indexMenu(schema: string, index: Index, actions: TreeActions, sql: SqlFor, t: Messages): MenuItem[] {
   return [
-    copyItem("Copy definition", `${index.definition};`),
-    copyItem("Copy name", index.name),
+    copyItem(t.tree.menu.copyDefinition, `${index.definition};`),
+    copyItem(t.tree.menu.copyName, index.name),
     { separator: true },
-    dropItem(`DROP INDEX ${sql.name(schema, index.name)};`, actions),
+    dropItem(`DROP INDEX ${sql.name(schema, index.name)};`, actions, t),
   ];
 }
 
@@ -432,8 +448,8 @@ function copyItem(label: string, text: string): MenuItem {
 }
 
 /** Destructive statements go into the editor for review; they never run from the menu. */
-function dropItem(statement: string, actions: TreeActions): MenuItem {
-  return { label: "Drop…", danger: true, onSelect: () => actions.insert(statement, false) };
+function dropItem(statement: string, actions: TreeActions, t: Messages): MenuItem {
+  return { label: t.tree.menu.drop, danger: true, onSelect: () => actions.insert(statement, false) };
 }
 
 /** Writes object names relative to the default schema, quoting where needed. */

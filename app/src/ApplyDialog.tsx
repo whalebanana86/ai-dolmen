@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { ApplyPreview, Rename, errorMessage, snapshots } from "./api";
+import { ApplyPreview, Blocker, Rename, errorMessage, snapshots } from "./api";
+import type { Messages } from "./i18n/en";
+import { useT } from "./settings";
 
 interface Props {
   sessionId: number;
@@ -18,12 +20,13 @@ interface Props {
  * user allows them, and only local databases can be changed.
  */
 export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: Props) {
+  const t = useT();
   const [renames, setRenames] = useState<Rename[]>([]);
   const [preview, setPreview] = useState<ApplyPreview | null>(null);
   const [loading, setLoading] = useState(true);
   const [allowDestructive, setAllowDestructive] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -33,7 +36,7 @@ export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: 
       .then(setPreview)
       .catch((err) => {
         setPreview(null);
-        setError(errorMessage(err));
+        setError(err);
       })
       .finally(() => setLoading(false));
   }, [sessionId, dir, rev, renames]);
@@ -74,7 +77,7 @@ export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: 
       onApplied();
       onClose();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(err);
     } finally {
       setApplying(false);
     }
@@ -88,31 +91,28 @@ export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: 
 
   return (
     <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !applying && onClose()}>
-      <div className="dialog" role="dialog" aria-label={`Update the database to match ${label}`}>
+      <div className="dialog" role="dialog" aria-label={t.apply.title(label)}>
         <header className="side-panel-header">
-          <strong>Update the database to match {label}</strong>
+          <strong>{t.apply.title(label)}</strong>
           <span className="spacer" />
-          <button onClick={onClose} disabled={applying} title="Close">
+          <button onClick={onClose} disabled={applying} title={t.common.close}>
             ✕
           </button>
         </header>
 
         <div className="dialog-body">
           {preview && !preview.local && (
-            <p className="error-box">
-              Only local databases (localhost, a loopback address or a Unix socket) can be changed from a
-              snapshot. This connection's server is elsewhere, so the plan is shown for review only.
-            </p>
+            <p className="error-box">{t.apply.notLocal}</p>
           )}
-          {loading && <p className="muted">Planning…</p>}
+          {loading && <p className="muted">{t.apply.planning}</p>}
           {plan && plan.blockers.length > 0 && (
             <div className="error-box">
               <p>
-                <strong>Dolmen can't make these changes, so the plan can't be applied:</strong>
+                <strong>{t.apply.blockersTitle}</strong>
               </p>
               <ul>
                 {plan.blockers.map((blocker) => (
-                  <li key={blocker}>{blocker}</li>
+                  <li key={JSON.stringify(blocker)}>{blockerText(blocker, t)}</li>
                 ))}
               </ul>
             </div>
@@ -120,7 +120,7 @@ export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: 
 
           {renameChoices.length > 0 && (
             <div className="rename-choices">
-              <p className="muted">These drops look like renames. Renaming keeps the data:</p>
+              <p className="muted">{t.apply.renamesIntro}</p>
               {renameChoices.map((rename) => (
                 <label key={JSON.stringify(rename)} className="checkbox">
                   <input
@@ -129,32 +129,29 @@ export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: 
                     onChange={() => toggleRename(rename)}
                     disabled={loading || applying}
                   />
-                  Rename {renameLabel(rename)}
+                  {renameLabel(rename, t)}
                 </label>
               ))}
             </div>
           )}
 
           {plan && plan.steps.length === 0 && plan.blockers.length === 0 && (
-            <p className="muted">The database already matches {label}.</p>
+            <p className="muted">{t.apply.alreadyMatches(label)}</p>
           )}
           {plan && plan.steps.length > 0 && (
             <>
-              <p className="muted">
-                {plan.steps.length} {plan.steps.length === 1 ? "step" : "steps"}, run in one transaction: if
-                any step fails, nothing changes.
-              </p>
+              <p className="muted">{t.apply.steps(plan.steps.length)}</p>
               <ol className="plan-steps">
                 {plan.steps.map((step, i) => (
                   <li key={i} className={step.destructive ? "destructive" : undefined}>
-                    {step.destructive && <span className="step-warning">Loses data</span>}
+                    {step.destructive && <span className="step-warning">{t.apply.losesData}</span>}
                     <pre>{step.sql}</pre>
                   </li>
                 ))}
               </ol>
             </>
           )}
-          {error && <p className="error-text">{error}</p>}
+          {error !== null && <p className="error-text">{errorMessage(error, t)}</p>}
         </div>
 
         <footer className="dialog-footer">
@@ -166,17 +163,16 @@ export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: 
                 onChange={(e) => setAllowDestructive(e.target.checked)}
                 disabled={applying}
               />
-              Allow {destructive} {destructive === 1 ? "step" : "steps"} that drop data or change column types.
-              Dropped data can't be brought back by applying a newer snapshot.
+              {t.apply.allowDestructive(destructive)}
             </label>
           )}
           <div className="actions">
             <span className="spacer" />
             <button onClick={onClose} disabled={applying}>
-              Cancel
+              {t.common.cancel}
             </button>
             <button className={destructive > 0 ? "primary danger-fill" : "primary"} onClick={apply} disabled={!canApply}>
-              {applying ? "Applying…" : "Apply"}
+              {applying ? t.apply.applying : t.apply.apply}
             </button>
           </div>
         </footer>
@@ -189,8 +185,21 @@ function sameRename(a: Rename, b: Rename) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function renameLabel(rename: Rename) {
+function renameLabel(rename: Rename, t: Messages) {
   return rename.kind === "table"
-    ? `table ${rename.schema}.${rename.from} → ${rename.to}`
-    : `column ${rename.schema}.${rename.table}.${rename.from} → ${rename.to}`;
+    ? t.apply.renameTable(`${rename.schema}.${rename.from}`, rename.to)
+    : t.apply.renameColumn(`${rename.schema}.${rename.table}.${rename.from}`, rename.to);
+}
+
+function blockerText(blocker: Blocker, t: Messages) {
+  switch (blocker.kind) {
+    case "enumValuesRemoved":
+      return t.apply.blockers.enumValuesRemoved(blocker.name);
+    case "tableKindChanged":
+      return t.apply.blockers.tableKindChanged(blocker.name);
+    case "generatedColumnChanged":
+      return t.apply.blockers.generatedColumnChanged(blocker.name);
+    case "renameNoLongerApplies":
+      return t.apply.blockers.renameNoLongerApplies(blocker.from, blocker.to);
+  }
 }

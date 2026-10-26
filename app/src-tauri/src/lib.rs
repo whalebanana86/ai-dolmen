@@ -37,6 +37,7 @@ pub fn run() {
             pg::pg_cancel,
             pg::pg_disconnect,
             snapshot::snapshot_checkout,
+            snapshot::snapshot_ssh_alternatives,
             snapshot::snapshot_status,
             snapshot::snapshot_save,
             snapshot::snapshot_push,

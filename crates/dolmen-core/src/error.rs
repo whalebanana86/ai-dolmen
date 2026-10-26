@@ -32,9 +32,27 @@ pub enum Error {
     #[error("{message}")]
     Storage { message: String },
     /// A safety rule stopped the action, such as applying a plan to a database
-    /// that isn't local.
+    /// that isn't local. The reason lets the app word it in the user's language.
     #[error("{message}")]
-    Refused { message: String },
+    Refused { reason: Refusal, message: String },
+}
+
+/// Why an action was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Refusal {
+    /// Only databases on this machine take snapshot plans.
+    NotLocal,
+    /// The database or snapshot changed since the plan was reviewed.
+    PlanChanged,
+    /// The plan has changes Dolmen can't make.
+    PlanBlocked,
+    /// The plan drops data and that wasn't allowed.
+    DestructiveNotAllowed,
+    /// The snapshot has no schema model, so it can't be applied.
+    NoModel,
+    /// A snapshot folder path inside a repository isn't a plain relative path.
+    BadSnapshotPath,
 }
 
 impl From<keyring_core::Error> for Error {

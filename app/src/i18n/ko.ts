@@ -1,0 +1,223 @@
+import { Messages } from "./en";
+
+const count = (n: number, unit: string) => `${n.toLocaleString()}${unit}`;
+
+export const ko: Messages = {
+  common: {
+    cancel: "취소",
+    close: "닫기",
+    save: "저장",
+    saving: "저장 중…",
+    delete: "삭제",
+    change: "변경…",
+    loading: "불러오는 중…",
+    settings: "설정",
+  },
+
+  errors: {
+    closed: "연결이 끊겼습니다.",
+    refused: {
+      notLocal: "스냅샷으로는 로컬 데이터베이스(localhost, 루프백 주소, 유닉스 소켓)만 바꿀 수 있습니다.",
+      planChanged: "계획을 검토한 뒤 데이터베이스나 스냅샷이 바뀌었습니다. 다시 검토해 주세요.",
+      planBlocked: "Dolmen이 할 수 없는 변경이 계획에 있습니다. 계획을 확인해 주세요.",
+      destructiveNotAllowed:
+        "데이터를 지우거나 컬럼 타입을 바꾸는 단계가 있습니다. 적용하려면 직접 허용해 주세요.",
+      noModel:
+        "이 스냅샷에는 dolmen-model.json이 없어 적용할 수 없습니다. Dolmen이 모델을 저장하기 전에 만든 스냅샷입니다. 새 스냅샷을 쓰고 커밋하면 나중에 적용할 수 있습니다.",
+      badSnapshotPath: "스냅샷 폴더는 db/schema처럼 저장소 안의 경로여야 합니다.",
+    },
+  },
+
+  settings: {
+    title: "설정",
+    language: "언어",
+    theme: "테마",
+    themes: { system: "시스템 설정 따르기", light: "밝게", dark: "어둡게" },
+  },
+
+  connect: {
+    subtitle: "PostgreSQL",
+    newConnection: "+ 새 연결",
+    doubleClickToConnect: "더블클릭하면 연결",
+    name: "이름",
+    host: "호스트",
+    port: "포트",
+    database: "데이터베이스",
+    user: "사용자",
+    password: "비밀번호",
+    savedInKeychain: "키체인에 저장됨",
+    sslMode: "SSL 모드",
+    sslModes: { disable: "사용 안 함", prefer: "가능하면 사용", require: "필수", "verify-full": "인증서까지 확인" },
+    savePassword: "비밀번호를 OS 키체인에 저장",
+    confirmDelete: "한 번 더 누르면 삭제",
+    connect: "연결",
+    connecting: "연결 중…",
+  },
+
+  workspace: {
+    run: "실행",
+    runTitle: "커서가 있는 문장이나 선택한 부분을 실행합니다 (⌘/Ctrl + Enter)",
+    disconnect: "연결 끊기",
+    snapshot: "스냅샷",
+    snapshotTitle: "데이터베이스를 스키마 스냅샷과 비교합니다",
+    running: "실행 중…",
+    runStatus: (line, done, total, ms) => `${line}행 · 문장 ${total}개 중 ${done}개 · ${ms} ms`,
+    errorLocation: (line, column) => `${line}행 ${column}열`,
+    hint: "힌트:",
+    locationNotSaved: (error) => `위치는 사용 중이지만 연결 정보에 저장하지 못했습니다: ${error}`,
+  },
+
+  results: {
+    statement: (n) => `문장 ${n}`,
+    rowsAffected: (n) => `${count(n, "행")} 변경됨`,
+    completed: "완료",
+    rows: (n) => count(n, "행"),
+    firstRows: (shown, total) => `전체 ${count(total, "행")} 중 처음 ${count(shown, "행")}`,
+  },
+
+  tree: {
+    filter: "필터",
+    reload: "데이터베이스 구조 새로고침",
+    notLoaded: "불러오지 않음",
+    groups: {
+      tables: "테이블",
+      views: "뷰",
+      functions: "함수",
+      sequences: "시퀀스",
+      enums: "열거형",
+    },
+    doubleClickToQuery: "더블클릭하면 조회",
+    menu: {
+      refresh: "새로고침",
+      dropSchema: "스키마 삭제…",
+      selectRows: "행 조회",
+      countRows: "행 수 세기",
+      generateSelect: "SELECT 만들기",
+      generateInsert: "INSERT 만들기",
+      generateRefresh: "REFRESH 만들기",
+      showDdl: "DDL 보기",
+      copyName: "이름 복사",
+      copyQualifiedName: "전체 이름 복사",
+      truncate: "비우기(TRUNCATE)…",
+      drop: "삭제(DROP)…",
+      showValueCounts: "값별 개수 보기",
+      showDefinition: "정의 보기",
+      copySignature: "시그니처 복사",
+      copyDefinition: "정의 복사",
+      showCurrentValue: "현재 값 보기",
+    },
+  },
+
+  snapshot: {
+    title: "스키마 스냅샷",
+    tabs: { changes: "변경 사항", history: "히스토리" },
+    compareAgain: "다시 비교",
+    pullAndCompare: "새 커밋을 받아 와서 다시 비교",
+    chooseFolderTitle: "스키마 스냅샷 폴더 선택",
+    gettingRepository: "저장소를 가져오는 중…",
+    cloneLocation: (path) => `Dolmen이 ${path}에 사본을 두고 커밋할 때마다 푸시합니다.`,
+    notInRepository: "Git 저장소 안이 아닙니다. 파일은 쓸 수 있지만 커밋할 수는 없습니다.",
+    behind: (n) => `${n}개 뒤처짐`,
+    publishBranch: "브랜치 올리기",
+    push: (n) => `푸시 ${n}`,
+    pushed: "푸시했습니다",
+    firstWrite: "처음 쓸 때 이 폴더를 스냅샷 폴더로 준비합니다.",
+    updatedDatabase: (label) => `데이터베이스를 ${label}에 맞췄습니다`,
+    latestSnapshot: "최신 스냅샷",
+    snapshotFiles: "스냅샷 파일",
+    httpsHint:
+      "HTTPS로 푸시하면 키체인에 저장된 GitHub 계정을 씁니다. 이 Mac에 계정이 여러 개라면, SSH 주소를 쓰면 키에 맞는 계정으로 푸시합니다:",
+    useAddress: (url) => `${url} 사용`,
+
+    location: {
+      intro:
+        "이 데이터베이스의 스키마 스냅샷을 어디에 둘까요? 테이블·뷰·함수마다 DDL 파일이 하나씩 있어 바로 커밋할 수 있습니다.",
+      repository: "Git 저장소",
+      repositoryHelp:
+        "Dolmen이 자체 사본을 두고 커밋할 때마다 푸시합니다. 스키마 전용 저장소에 알맞습니다. 사용자의 git 설정을 쓰므로 git@github.com:you/schema.git 같은 SSH 주소는 SSH 키로 푸시합니다.",
+      repositoryUrl: "저장소 URL",
+      folderInRepository: "저장소 안 폴더",
+      useRepository: "저장소 사용",
+      folder: "이 컴퓨터의 폴더",
+      folderHelp: "예를 들어 앱 저장소의 db/schema에 두면 스키마와 코드가 같은 커밋에서 함께 바뀝니다.",
+      chooseFolder: "폴더 선택…",
+    },
+
+    changes: {
+      comparing: "데이터베이스와 비교하는 중…",
+      matches: "스냅샷이 데이터베이스와 일치합니다.",
+      count: (n) => `마지막 스냅샷 이후 ${count(n, "개")} 변경`,
+      commitMessage: "커밋 메시지",
+      writeFiles: "파일 쓰기",
+      updateDatabase: "데이터베이스 맞추기…",
+      updateDatabaseTitle: "예전 커밋을 체크아웃한 뒤처럼, 데이터베이스를 파일에 맞춥니다",
+      commit: "커밋",
+      notInRepositoryTitle: "폴더가 Git 저장소 안에 있지 않습니다",
+      commitAndPush: "커밋하고 푸시",
+      newCommitsArrived: "저장소에 새 커밋이 들어왔습니다. 커밋하기 전에 변경 사항을 다시 확인해 주세요.",
+      wrote: (files) => `파일 ${count(files, "개")}를 썼습니다`,
+      committed: (hash, files, pushed) =>
+        `${hash} ${pushed ? "커밋하고 푸시했습니다" : "커밋했습니다"} (파일 ${count(files, "개")})`,
+      modelNote: "DDL을 만든 스키마 모델입니다. 나중에 이 스냅샷을 데이터베이스에 적용할 때 씁니다.",
+      defaultMessage: (database, lines) => `${database} 스키마 스냅샷 갱신\n\n${lines.join("\n")}`,
+      messageLine: { added: "추가", modified: "수정", removed: "삭제" },
+      andMore: (n) => `외 ${n}개`,
+    },
+
+    history: {
+      noCommits: "아직 커밋이 없습니다.",
+      comparingTo: (label) => `데이터베이스 → ${label}`,
+      comparisonHelp: "데이터베이스를 이 커밋에 맞추면 바뀌는 내용",
+      comparing: "비교하는 중…",
+      alreadyMatches: "데이터베이스가 이미 이 커밋의 스냅샷과 일치합니다.",
+      updateDatabase: (label) => `데이터베이스를 ${label}에 맞추기…`,
+    },
+  },
+
+  apply: {
+    title: (label) => `데이터베이스를 ${label}에 맞추기`,
+    notLocal:
+      "스냅샷으로는 로컬 데이터베이스(localhost, 루프백 주소, 유닉스 소켓)만 바꿀 수 있습니다. 이 연결의 서버는 다른 곳에 있어서 계획은 검토용으로만 보여 줍니다.",
+    planning: "계획을 세우는 중…",
+    blockersTitle: "Dolmen이 할 수 없는 변경이라 이 계획은 적용할 수 없습니다:",
+    blockers: {
+      enumValuesRemoved: (name) => `열거형 ${name}: 값을 지우거나 순서를 바꿀 수는 없고, 추가만 할 수 있습니다.`,
+      tableKindChanged: (name) => `테이블 ${name}: 종류나 파티션 방식은 바꿀 수 없습니다.`,
+      generatedColumnChanged: (name) =>
+        `컬럼 ${name}: 일반 컬럼을 생성 컬럼으로 바꾸거나 저장 방식을 바꿀 수는 없습니다.`,
+      renameNoLongerApplies: (from, to) => `${from}을(를) ${to}(으)로 바꾸는 이름 변경은 더 이상 맞지 않습니다.`,
+    },
+    renamesIntro: "아래 삭제는 이름 변경으로 보입니다. 이름을 바꾸면 데이터가 유지됩니다:",
+    renameTable: (from, to) => `테이블 이름 변경 ${from} → ${to}`,
+    renameColumn: (from, to) => `컬럼 이름 변경 ${from} → ${to}`,
+    alreadyMatches: (label) => `데이터베이스가 이미 ${label}와(과) 일치합니다.`,
+    steps: (n) => `${count(n, "단계")}를 한 트랜잭션으로 실행합니다. 한 단계라도 실패하면 아무것도 바뀌지 않습니다.`,
+    losesData: "데이터 손실",
+    allowDestructive: (n) =>
+      `데이터를 지우거나 컬럼 타입을 바꾸는 ${count(n, "단계")}를 허용합니다. 지운 데이터는 더 새로운 스냅샷을 적용해도 돌아오지 않습니다.`,
+    apply: "적용",
+    applying: "적용하는 중…",
+  },
+
+  graph: {
+    committedBy: (author, date) => `${author}, ${date}`,
+  },
+
+  editorPhrases: {
+    Find: "찾기",
+    Replace: "바꾸기",
+    next: "다음",
+    previous: "이전",
+    all: "모두",
+    "match case": "대소문자 구분",
+    regexp: "정규식",
+    "by word": "단어 단위",
+    replace: "바꾸기",
+    "replace all": "모두 바꾸기",
+    close: "닫기",
+    "current match": "현재 일치",
+    "on line": "줄",
+    "Go to line": "줄로 이동",
+    go: "이동",
+  },
+};

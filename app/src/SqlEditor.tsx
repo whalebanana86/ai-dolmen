@@ -6,6 +6,7 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { PostgreSQL, SQLNamespace, sql } from "@codemirror/lang-sql";
 import { tags } from "@lezer/highlight";
 import { Introspection } from "./api";
+import { useT } from "./settings";
 
 interface Props {
   initialValue: string;
@@ -19,7 +20,9 @@ interface Props {
 
 export function SqlEditor({ initialValue, introspection, onRun, onChange, viewRef }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const t = useT();
   const [language] = useState(() => new Compartment());
+  const [phrases] = useState(() => new Compartment());
   // The view is created once, so it reads the latest callbacks through a ref.
   const handlers = useRef({ onRun, onChange });
   useEffect(() => {
@@ -45,6 +48,7 @@ export function SqlEditor({ initialValue, introspection, onRun, onChange, viewRe
           ),
           basicSetup,
           language.of(sqlLanguage(null)),
+          phrases.of(EditorState.phrases.of(t.editorPhrases)),
           syntaxHighlighting(highlightStyle),
           theme,
           EditorView.updateListener.of((update) => {
@@ -65,6 +69,11 @@ export function SqlEditor({ initialValue, introspection, onRun, onChange, viewRe
   useEffect(() => {
     viewRef.current?.dispatch({ effects: language.reconfigure(sqlLanguage(introspection)) });
   }, [introspection, language, viewRef]);
+
+  // CodeMirror's own labels, such as the search panel's, follow the app's language.
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: phrases.reconfigure(EditorState.phrases.of(t.editorPhrases)) });
+  }, [t, phrases, viewRef]);
 
   return <div ref={parentRef} className="editor" />;
 }

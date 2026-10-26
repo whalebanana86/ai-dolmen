@@ -9,13 +9,10 @@ import {
   errorMessage,
   pg,
 } from "./api";
+import { SettingsButton, SettingsDialog } from "./SettingsDialog";
+import { useT } from "./settings";
 
-const SSL_MODES: { value: SslMode; label: string }[] = [
-  { value: "disable", label: "Disable" },
-  { value: "prefer", label: "Prefer" },
-  { value: "require", label: "Require" },
-  { value: "verify-full", label: "Verify full" },
-];
+const SSL_MODES: SslMode[] = ["disable", "prefer", "require", "verify-full"];
 
 /** The form fields; the port stays a string while it is being edited. */
 type Draft = Omit<SavedConnection, "port"> & { port: string };
@@ -47,6 +44,8 @@ interface Props {
 }
 
 export function ConnectionForm({ onConnected }: Props) {
+  const t = useT();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [version, setVersion] = useState("");
   const [saved, setSaved] = useState<SavedConnection[]>([]);
   const [draft, setDraft] = useState<Draft>(NEW_CONNECTION);
@@ -61,7 +60,8 @@ export function ConnectionForm({ onConnected }: Props) {
     connections
       .list()
       .then(setSaved)
-      .catch((err) => setError(errorMessage(err)));
+      .catch((err) => setError(errorMessage(err, t)));
+    // Only on open; a language change doesn't need the list again.
   }, []);
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
@@ -95,7 +95,7 @@ export function ConnectionForm({ onConnected }: Props) {
       );
       onConnected(session, saved.find((connection) => connection.id === target.id) ?? null);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
       setBusy(null);
     }
   }
@@ -116,7 +116,7 @@ export function ConnectionForm({ onConnected }: Props) {
       setSaved(await connections.list());
       select(toDraft(result));
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(null);
     }
@@ -134,7 +134,7 @@ export function ConnectionForm({ onConnected }: Props) {
       setSaved(await connections.list());
       select(NEW_CONNECTION);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(null);
     }
@@ -152,12 +152,14 @@ export function ConnectionForm({ onConnected }: Props) {
           <header>
             <h1>Dolmen</h1>
             {version && <span className="muted">v{version}</span>}
+            <span className="spacer" />
+            <SettingsButton onClick={() => setSettingsOpen(true)} />
           </header>
           <button
             className={`saved-item ${draft.id === "" ? "selected" : ""}`}
             onClick={() => select(NEW_CONNECTION)}
           >
-            + New connection
+            {t.connect.newConnection}
           </button>
           {saved.map((connection) => (
             <button
@@ -165,7 +167,7 @@ export function ConnectionForm({ onConnected }: Props) {
               className={`saved-item ${connection.id === draft.id ? "selected" : ""}`}
               onClick={() => select(toDraft(connection))}
               onDoubleClick={() => connect(toDraft(connection), "")}
-              title="Double-click to connect"
+              title={t.connect.doubleClickToConnect}
             >
               <span>{connection.name}</span>
               <span className="muted">
@@ -176,9 +178,9 @@ export function ConnectionForm({ onConnected }: Props) {
         </aside>
 
         <form className="connect-form" onSubmit={submit}>
-          <p className="muted">PostgreSQL</p>
+          <p className="muted">{t.connect.subtitle}</p>
           <label className="field">
-            Name
+            {t.connect.name}
             <input
               value={draft.name}
               placeholder={defaultName(draft)}
@@ -187,11 +189,11 @@ export function ConnectionForm({ onConnected }: Props) {
           </label>
           <div className="field-row">
             <label className="field grow">
-              Host
+              {t.connect.host}
               <input value={draft.host} onChange={(e) => update("host", e.target.value)} required />
             </label>
             <label className="field port">
-              Port
+              {t.connect.port}
               <input
                 type="number"
                 min={1}
@@ -203,7 +205,7 @@ export function ConnectionForm({ onConnected }: Props) {
             </label>
           </div>
           <label className="field">
-            Database
+            {t.connect.database}
             <input
               value={draft.database}
               onChange={(e) => update("database", e.target.value)}
@@ -212,25 +214,25 @@ export function ConnectionForm({ onConnected }: Props) {
           </label>
           <div className="field-row">
             <label className="field grow">
-              User
+              {t.connect.user}
               <input value={draft.user} onChange={(e) => update("user", e.target.value)} required />
             </label>
             <label className="field grow">
-              Password
+              {t.connect.password}
               <input
                 type="password"
                 value={password}
-                placeholder={draft.hasPassword ? "Saved in keychain" : ""}
+                placeholder={draft.hasPassword ? t.connect.savedInKeychain : ""}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </label>
           </div>
           <label className="field">
-            SSL mode
+            {t.connect.sslMode}
             <select value={draft.sslMode} onChange={(e) => update("sslMode", e.target.value as SslMode)}>
               {SSL_MODES.map((mode) => (
-                <option key={mode.value} value={mode.value}>
-                  {mode.label}
+                <option key={mode} value={mode}>
+                  {t.connect.sslModes[mode]}
                 </option>
               ))}
             </select>
@@ -241,26 +243,27 @@ export function ConnectionForm({ onConnected }: Props) {
               checked={savePassword}
               onChange={(e) => setSavePassword(e.target.checked)}
             />
-            Save password in the OS keychain
+            {t.connect.savePassword}
           </label>
 
           {error && <p className="error-text">{error}</p>}
           <div className="actions">
             {draft.id && (
               <button type="button" className="danger" onClick={remove} disabled={busy !== null}>
-                {confirmingDelete ? "Click again to delete" : "Delete"}
+                {confirmingDelete ? t.connect.confirmDelete : t.common.delete}
               </button>
             )}
             <span className="spacer" />
             <button type="button" onClick={save} disabled={busy !== null}>
-              {busy === "save" ? "Saving…" : "Save"}
+              {busy === "save" ? t.common.saving : t.common.save}
             </button>
             <button type="submit" className="primary" disabled={busy !== null}>
-              {busy === "connect" ? "Connecting…" : "Connect"}
+              {busy === "connect" ? t.connect.connecting : t.connect.connect}
             </button>
           </div>
         </form>
       </div>
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </main>
   );
 }

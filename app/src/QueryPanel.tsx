@@ -18,8 +18,10 @@ import {
 } from "./api";
 import { ResultView } from "./ResultView";
 import { SchemaTree } from "./SchemaTree";
+import { SettingsButton, SettingsDialog } from "./SettingsDialog";
 import { SnapshotPanel } from "./SnapshotPanel";
 import { SqlEditor } from "./SqlEditor";
+import { useT } from "./settings";
 
 const INITIAL_SQL = "SELECT version();\n";
 
@@ -49,6 +51,13 @@ interface Props {
 }
 
 export function QueryPanel({ session, connection, onConnectionChange, onDisconnect }: Props) {
+  const t = useT();
+  // For callbacks that must not rerun when only the language changes.
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const viewRef = useRef<EditorView | null>(null);
   const [hasText, setHasText] = useState(INITIAL_SQL.trim() !== "");
   const [introspection, setIntrospection] = useState<Introspection | null>(null);
@@ -90,7 +99,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         setSnapshotStatus(status);
         setSnapshotError(null);
       })
-      .catch((error) => setSnapshotError(errorMessage(error)))
+      .catch((error) => setSnapshotError(errorMessage(error, tRef.current)))
       .finally(() => setCheckingSnapshot(false));
   }, [session.id, snapshotDir]);
   useEffect(refreshSnapshot, [refreshSnapshot]);
@@ -105,7 +114,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       setSnapshotError(null);
       return checkout;
     } catch (error) {
-      setSnapshotError(errorMessage(error));
+      setSnapshotError(errorMessage(error, tRef.current));
       throw error;
     } finally {
       setPreparingRemote(false);
@@ -121,7 +130,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     try {
       onConnectionChange(await connections.save({ ...connection, ...location }, { kind: "keep" }));
     } catch (error) {
-      setSnapshotError(`The location is in use but couldn't be saved with the connection: ${errorMessage(error)}`);
+      setSnapshotError(t.workspace.locationNotSaved(errorMessage(error, t)));
     }
   }
 
@@ -227,26 +236,27 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         <span className="muted">PostgreSQL {session.serverVersion}</span>
         <span className="spacer" />
         {running ? (
-          <button onClick={cancel}>Cancel</button>
+          <button onClick={cancel}>{t.common.cancel}</button>
         ) : (
           <button
             className="primary"
             onClick={run}
             disabled={!hasText}
-            title="Runs the statement at the cursor, or the selection (⌘/Ctrl + Enter)"
+            title={t.workspace.runTitle}
           >
-            Run
+            {t.workspace.run}
           </button>
         )}
-        <button onClick={() => setSnapshotOpen(true)} title="Compare the database with its schema snapshot">
-          Snapshot
+        <button onClick={() => setSnapshotOpen(true)} title={t.workspace.snapshotTitle}>
+          {t.workspace.snapshot}
           {snapshotStatus && (
             <span className={`badge ${snapshotStatus.changes.length > 0 ? "" : "ok"}`}>
               {snapshotStatus.changes.length > 0 ? snapshotStatus.changes.length : "✓"}
             </span>
           )}
         </button>
-        <button onClick={disconnect}>Disconnect</button>
+        <button onClick={disconnect}>{t.workspace.disconnect}</button>
+        <SettingsButton onClick={() => setSettingsOpen(true)} />
       </div>
 
       <div className="workspace-body">
@@ -265,13 +275,16 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           />
 
           <section className="results">
-            {running && <p className="muted status">Running…</p>}
+            {running && <p className="muted status">{t.workspace.running}</p>}
             {!running && outcome && (
               <>
                 <p className="muted status">
-                  Line {outcome.firstLine} · {outcome.results.length} of {outcome.statementCount}{" "}
-                  {outcome.statementCount === 1 ? "statement" : "statements"} ·{" "}
-                  {Math.round(outcome.elapsedMs)} ms
+                  {t.workspace.runStatus(
+                    outcome.firstLine,
+                    outcome.results.length,
+                    outcome.statementCount,
+                    Math.round(outcome.elapsedMs),
+                  )}
                 </p>
                 {outcome.results.map((result, index) => (
                   <ResultView key={`${outcome.runId}-${index}`} index={index} result={result} />
@@ -282,6 +295,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           </section>
         </div>
       </div>
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {snapshotOpen && (
         <SnapshotPanel
           sessionId={session.id}
@@ -319,21 +333,26 @@ async function statementsToRun(sql: string, selectionStart: number, selectionEnd
 }
 
 function ErrorView({ error, location }: { error: unknown; location: Location | null }) {
+  const t = useT();
   const db = isAppError(error) && error.kind === "database" ? error : null;
 
   return (
     <div className="error-box">
       <p>
-        <strong>{errorMessage(error)}</strong>
+        <strong>{errorMessage(error, t)}</strong>
       </p>
       {db && (
         <p className="muted">
           SQLSTATE {db.code}
-          {location && ` · line ${location.line}, column ${location.column}`}
+          {location && ` · ${t.workspace.errorLocation(location.line, location.column)}`}
         </p>
       )}
       {db?.detail && <p>{db.detail}</p>}
-      {db?.hint && <p className="muted">Hint: {db.hint}</p>}
+      {db?.hint && (
+        <p className="muted">
+          {t.workspace.hint} {db.hint}
+        </p>
+      )}
     </div>
   );
 }

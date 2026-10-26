@@ -1,6 +1,7 @@
 // Typed wrappers around the Tauri commands in src-tauri/src/lib.rs.
 // The shapes mirror dolmen-core and are pinned by crates/dolmen-core/tests/wire_format.rs.
 import { invoke } from "@tauri-apps/api/core";
+import type { Messages } from "./i18n/en";
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
 
@@ -128,7 +129,16 @@ export type AppError =
   | { kind: "connection"; message: string }
   | { kind: "closed" }
   | { kind: "storage"; message: string }
-  | { kind: "refused"; message: string };
+  | { kind: "refused"; reason: Refusal; message: string };
+
+/** Why the backend refused an action; the UI words each in the user's language. */
+export type Refusal =
+  | "notLocal"
+  | "planChanged"
+  | "planBlocked"
+  | "destructiveNotAllowed"
+  | "noModel"
+  | "badSnapshotPath";
 
 export function appVersion() {
   return invoke<string>("app_version");
@@ -226,10 +236,17 @@ export type Rename =
   | { kind: "table"; schema: string; from: string; to: string }
   | { kind: "column"; schema: string; table: string; from: string; to: string };
 
+/** A change the plan can't make. */
+export type Blocker =
+  | { kind: "enumValuesRemoved"; name: string }
+  | { kind: "tableKindChanged"; name: string }
+  | { kind: "generatedColumnChanged"; name: string }
+  | { kind: "renameNoLongerApplies"; from: string; to: string };
+
 export interface Plan {
   steps: { sql: string; destructive: boolean }[];
   /** Changes Dolmen can't make; a plan with blockers can't be applied. */
-  blockers: string[];
+  blockers: Blocker[];
   /** Drops paired with adds that look like renames. */
   renameCandidates: Rename[];
 }
@@ -245,6 +262,8 @@ export const snapshots = {
    * Clones the repository into Dolmen's own folder, or brings that clone up to
    * date (fast-forward only), and returns the snapshot folder inside it.
    */
+  /** SSH addresses for an HTTPS repository URL, from the aliases in ~/.ssh/config. */
+  sshAlternatives: (url: string) => invoke<string[]>("snapshot_ssh_alternatives", { url }),
   checkout: (url: string, path: string) =>
     invoke<{ dir: string; clone: string; updated: boolean }>("snapshot_checkout", { url, path }),
   status: (sessionId: number, dir: string) =>
@@ -298,7 +317,15 @@ export function isAppError(error: unknown): error is AppError {
   return typeof error === "object" && error !== null && "kind" in error;
 }
 
-export function errorMessage(error: unknown): string {
-  if (!isAppError(error)) return String(error);
-  return error.kind === "closed" ? "The connection is closed." : error.message;
+/** Words an error for the user. Server and git messages pass through as they are. */
+export function errorMessage(error: unknown, t: Messages): string {
+  if (!isAppError(error)) return error instanceof Error ? error.message : String(error);
+  switch (error.kind) {
+    case "closed":
+      return t.errors.closed;
+    case "refused":
+      return t.errors.refused[error.reason] ?? error.message;
+    default:
+      return error.message;
+  }
 }

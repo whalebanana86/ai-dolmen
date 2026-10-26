@@ -29,8 +29,9 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* Dark colors follow the system unless the settings pick a theme. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1b1b1e;
     --surface: #232327;
     --border: #3a3a40;
@@ -50,7 +51,35 @@
     --syntax-comment: #7a7a85;
     --diff-add: #8fd19e;
     --diff-add-bg: #1f3325;
+    color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1b1b1e;
+  --surface: #232327;
+  --border: #3a3a40;
+  --text: #e6e6ea;
+  --muted: #9a9aa5;
+  --accent: #5c7cfa;
+  --danger: #ff8787;
+  --danger-bg: #3a2224;
+  --null: #6b6b75;
+  --active-line: #2a2a2f;
+  --selection: #34406b;
+  --selection-match: #2f3550;
+  --syntax-keyword: #c792ea;
+  --syntax-type: #82aaff;
+  --syntax-string: #a5d6a7;
+  --syntax-number: #f7a072;
+  --syntax-comment: #7a7a85;
+  --diff-add: #8fd19e;
+  --diff-add-bg: #1f3325;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * {
@@ -996,4 +1025,64 @@ button.primary.danger-fill {
 .location-choice .field input {
   font-family: var(--mono);
   font-size: 12px;
+}
+
+/* Settings */
+
+.icon-button {
+  padding: 2px 8px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.saved-list header .icon-button {
+  align-self: center;
+}
+
+.settings-dialog {
+  width: min(420px, 100%);
+}
+
+.theme-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.theme-choice legend {
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.theme-choice .checkbox {
+  color: var(--text);
+}
+
+/* Suggesting SSH addresses for an HTTPS repository */
+
+.ssh-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.ssh-hint p {
+  margin: 0;
+}
+
+.ssh-hint button {
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

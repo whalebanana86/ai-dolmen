@@ -1,5 +1,6 @@
 import { StatementResult } from "./api";
 import { ResultGrid } from "./ResultGrid";
+import { useT } from "./settings";
 
 interface Props {
   index: number;
@@ -7,12 +8,13 @@ interface Props {
 }
 
 export function ResultView({ index, result }: Props) {
+  const t = useT();
   if (result.kind === "command") {
     return (
       <div className="result">
         <p className="result-title">
-          Statement {index + 1}:{" "}
-          {result.rowsAffected > 0 ? `${result.rowsAffected.toLocaleString()} rows affected` : "completed"}
+          {t.results.statement(index + 1)}:{" "}
+          {result.rowsAffected > 0 ? t.results.rowsAffected(result.rowsAffected) : t.results.completed}
         </p>
       </div>
     );
@@ -22,10 +24,8 @@ export function ResultView({ index, result }: Props) {
   return (
     <div className="result">
       <p className="result-title">
-        Statement {index + 1}:{" "}
-        {truncated
-          ? `showing first ${result.rows.length.toLocaleString()} of ${result.totalRows.toLocaleString()} rows`
-          : `${result.totalRows.toLocaleString()} ${result.totalRows === 1 ? "row" : "rows"}`}
+        {t.results.statement(index + 1)}:{" "}
+        {truncated ? t.results.firstRows(result.rows.length, result.totalRows) : t.results.rows(result.totalRows)}
       </p>
       <ResultGrid columns={result.columns} rows={result.rows} />
     </div>

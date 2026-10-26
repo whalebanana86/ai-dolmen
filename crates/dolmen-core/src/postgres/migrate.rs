@@ -7,6 +7,7 @@
 //! tables; add constraints, indexes and foreign keys; create views; drop the rest.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -22,10 +23,53 @@ pub struct Plan {
     pub steps: Vec<Step>,
     /// Changes the plan can't make, such as removing an enum value. A plan with
     /// blockers must not be applied.
-    pub blockers: Vec<String>,
+    pub blockers: Vec<Blocker>,
     /// Drops paired with adds that look like renames. Planning again with them
     /// as renames keeps the data instead of dropping it.
     pub rename_candidates: Vec<Rename>,
+}
+
+/// A change the plan can't make. Tagged by kind, so the app can word it in the
+/// user's language; `Display` gives the English wording.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum Blocker {
+    /// Enum values can be added in place but not removed or reordered.
+    EnumValuesRemoved { name: String },
+    /// A table's kind (table, partitioned, foreign) or partition key changed.
+    TableKindChanged { name: String },
+    /// A column would become generated, or switch between stored and virtual.
+    GeneratedColumnChanged { name: String },
+    /// A rename asked for no longer matches the database or the snapshot.
+    RenameNoLongerApplies { from: String, to: String },
+}
+
+impl fmt::Display for Blocker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Blocker::EnumValuesRemoved { name } => write!(
+                f,
+                "Enum {name}: removing or reordering values isn't supported; only adding values is."
+            ),
+            Blocker::TableKindChanged { name } => {
+                write!(
+                    f,
+                    "Table {name}: changing its kind or partitioning isn't supported."
+                )
+            }
+            Blocker::GeneratedColumnChanged { name } => write!(
+                f,
+                "Column {name}: turning it into a generated column, or changing whether it is stored, isn't supported."
+            ),
+            Blocker::RenameNoLongerApplies { from, to } => {
+                write!(f, "The rename of {from} to {to} no longer applies.")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -104,7 +148,7 @@ enum Phase {
 #[derive(Default)]
 struct Planner {
     phases: BTreeMap<Phase, Vec<Step>>,
-    blockers: Vec<String>,
+    blockers: Vec<Blocker>,
     candidates: Vec<Rename>,
     /// Set by changes that can break views on the table: dropped tables and
     /// columns, type changes and renames. Views are then all recreated.
@@ -136,9 +180,10 @@ impl Planner {
                 let Some(table) =
                     find_table_mut(current, schema, from).filter(|_| exists_in_target)
                 else {
-                    self.blockers.push(format!(
-                        "The rename of {schema}.{from} to {to} no longer applies."
-                    ));
+                    self.blockers.push(Blocker::RenameNoLongerApplies {
+                        from: format!("{schema}.{from}"),
+                        to: to.clone(),
+                    });
                     return;
                 };
                 table.name = to.clone();
@@ -164,9 +209,10 @@ impl Planner {
                     .and_then(|t| t.columns.iter_mut().find(|c| &c.name == from))
                     .filter(|_| exists_in_target);
                 let Some(column) = column else {
-                    self.blockers.push(format!(
-                        "The rename of {schema}.{table}.{from} to {to} no longer applies."
-                    ));
+                    self.blockers.push(Blocker::RenameNoLongerApplies {
+                        from: format!("{schema}.{table}.{from}"),
+                        to: to.clone(),
+                    });
                     return;
                 };
                 column.name = to.clone();
@@ -338,10 +384,9 @@ impl Planner {
             .filter(|l| current.labels.contains(l))
             .collect();
         if kept.len() != current.labels.len() || !kept.iter().copied().eq(current.labels.iter()) {
-            self.blockers.push(format!(
-                "Enum {}: removing or reordering values isn't supported; only adding values is.",
-                qualified(schema, &target.name)
-            ));
+            self.blockers.push(Blocker::EnumValuesRemoved {
+                name: qualified(schema, &target.name),
+            });
             return;
         }
         let name = qualified(schema, &target.name);
@@ -414,9 +459,7 @@ impl Planner {
     fn table(&mut self, schema: &str, current: &Table, target: &Table) {
         let name = qualified(schema, &target.name);
         if current.kind != target.kind || current.partition_key != target.partition_key {
-            self.blockers.push(format!(
-                "Table {name}: changing its kind or partitioning isn't supported."
-            ));
+            self.blockers.push(Blocker::TableKindChanged { name });
             return;
         }
 
@@ -552,10 +595,9 @@ impl Planner {
                 push(self, format!("SET EXPRESSION AS ({})", b.expression), false);
             }
             (Some(_), None) => push(self, "DROP EXPRESSION".into(), false),
-            (a, b) if a != b => self.blockers.push(format!(
-                "Column {table}.{}: turning it into a generated column, or changing whether it is stored, isn't supported.",
-                quote_ident(&target.name)
-            )),
+            (a, b) if a != b => self.blockers.push(Blocker::GeneratedColumnChanged {
+                name: column_name(table, target),
+            }),
             _ => {}
         }
         if !current.nullable && target.nullable {

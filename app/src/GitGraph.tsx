@@ -1,4 +1,5 @@
 import { Commit } from "./api";
+import { useSettings, useT } from "./settings";
 
 const ROW_HEIGHT = 28;
 const LANE_WIDTH = 14;
@@ -16,6 +17,8 @@ interface Props {
  * that changed the schema snapshot.
  */
 export function GitGraph({ commits, selected, onSelect }: Props) {
+  const t = useT();
+  const { locale } = useSettings().settings;
   const rows = layout(commits);
   const width = (Math.max(1, ...rows.map((row) => row.width)) + 1) * LANE_WIDTH;
 
@@ -28,7 +31,7 @@ export function GitGraph({ commits, selected, onSelect }: Props) {
             key={commit.hash}
             className={`graph-row ${commit.hash === selected ? "selected" : ""} ${commit.changesSnapshot ? "" : "dim"}`}
             onClick={() => onSelect(commit)}
-            title={`${commit.hash}\n${commit.author}, ${new Date(commit.date).toLocaleString()}`}
+            title={`${commit.hash}\n${t.graph.committedBy(commit.author, new Date(commit.date).toLocaleString(locale))}`}
           >
             <svg width={width} height={ROW_HEIGHT} className="graph-lanes" aria-hidden>
               {row.segments.map((segment, i) => (
@@ -60,7 +63,7 @@ export function GitGraph({ commits, selected, onSelect }: Props) {
               <span className="graph-subject">{commit.subject}</span>
             </span>
             <span className="graph-meta">
-              {commit.author} · {relativeDate(commit.date)} · <code>{commit.hash.slice(0, 7)}</code>
+              {commit.author} · {relativeDate(commit.date, locale)} · <code>{commit.hash.slice(0, 7)}</code>
             </span>
           </button>
         );
@@ -156,19 +159,20 @@ function color(lane: number) {
   return LANE_COLORS[lane % LANE_COLORS.length];
 }
 
-function relativeDate(iso: string) {
-  const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
-  const steps: [number, string][] = [
-    [60, "s"],
-    [60, "m"],
-    [24, "h"],
-    [30, "d"],
-    [12, "mo"],
+/** "2 hours ago" in the app's language. */
+function relativeDate(iso: string, locale: string) {
+  const format = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  let value = (new Date(iso).getTime() - Date.now()) / 1000;
+  const steps: [number, Intl.RelativeTimeFormatUnit][] = [
+    [60, "second"],
+    [60, "minute"],
+    [24, "hour"],
+    [30, "day"],
+    [12, "month"],
   ];
-  let value = seconds;
   for (const [size, unit] of steps) {
-    if (value < size) return `${Math.max(0, Math.floor(value))}${unit} ago`;
+    if (Math.abs(value) < size) return format.format(Math.round(value), unit);
     value /= size;
   }
-  return `${Math.floor(value)}y ago`;
+  return format.format(Math.round(value), "year");
 }

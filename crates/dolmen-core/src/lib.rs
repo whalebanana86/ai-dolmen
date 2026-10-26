@@ -10,7 +10,7 @@ pub mod schema;
 pub mod snapshot;
 pub mod sql;
 
-pub use error::Error;
+pub use error::{Error, Refusal};
 
 /// Dolmen version, shared by the app and the CLI.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

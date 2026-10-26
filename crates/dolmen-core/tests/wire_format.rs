@@ -204,9 +204,17 @@ fn plans_and_renames_use_camel_case_and_kind_tags() {
     assert_eq!(back, rename);
     assert_eq!(
         serde_json::to_value(Error::Refused {
+            reason: dolmen_core::Refusal::NotLocal,
             message: "no".into()
         })
         .unwrap(),
-        json!({ "kind": "refused", "message": "no" })
+        json!({ "kind": "refused", "reason": "notLocal", "message": "no" })
+    );
+    assert_eq!(
+        serde_json::to_value(dolmen_core::postgres::migrate::Blocker::EnumValuesRemoved {
+            name: "app.mood".into()
+        })
+        .unwrap(),
+        json!({ "kind": "enumValuesRemoved", "name": "app.mood" })
     );
 }
