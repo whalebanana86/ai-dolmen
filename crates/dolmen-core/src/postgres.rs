@@ -197,6 +197,8 @@ pub struct Session {
     /// every schema whatever the user's session has set, and introspection never
     /// touches the user's transaction.
     metadata: tokio::sync::Mutex<Option<Client>>,
+    /// The default schema as last read, for when the session can't answer.
+    default_schema: std::sync::Mutex<Option<String>>,
 }
 
 impl Session {
@@ -212,12 +214,17 @@ impl Session {
             })
             .unwrap_or_default();
 
+        let default_schema = client
+            .query_one("SELECT current_schema()", &[])
+            .await?
+            .get(0);
         Ok(Self {
             client,
             tls,
             server_version,
             config: config.clone(),
             metadata: tokio::sync::Mutex::new(None),
+            default_schema: std::sync::Mutex::new(default_schema),
         })
     }
 
@@ -347,22 +354,43 @@ impl Session {
         self.config.is_local()
     }
 
-    /// Runs a migration plan in one transaction, so it applies completely or
-    /// not at all. It runs on the metadata connection: the user's session may
-    /// be inside its own transaction, and the plan names every schema anyway.
-    /// Function bodies aren't checked while creating them, as in a pg_dump
-    /// restore, since they may read tables created later in the plan.
+    /// Runs a snapshot's migration plan in one transaction, so it applies
+    /// completely or not at all. It runs on the metadata connection: the
+    /// user's session may be inside its own transaction, and the plan names
+    /// every schema anyway. Function bodies aren't checked while creating
+    /// them, as in a pg_dump restore, since they may read tables created later
+    /// in the plan.
     pub async fn apply(&self, plan: &migrate::Plan) -> Result<(), Error> {
+        self.run_plan(plan, "SET LOCAL check_function_bodies = false")
+            .await
+    }
+
+    /// Runs the plan of an edit made in the app, in one transaction like
+    /// [`apply`](Self::apply). The SQL the user wrote, such as a view's query
+    /// or a default, may name objects without their schema, so names resolve
+    /// in `schema` first, then `public`; function bodies are checked.
+    pub async fn apply_edit(&self, plan: &migrate::Plan, schema: &str) -> Result<(), Error> {
+        let search_path = format!(
+            "SET LOCAL search_path = {}, public",
+            crate::postgres::ddl::quote_ident(schema)
+        );
+        self.run_plan(plan, &search_path).await
+    }
+
+    async fn run_plan(&self, plan: &migrate::Plan, setup: &str) -> Result<(), Error> {
         let mut metadata = self.metadata().await?;
         let client = metadata.as_mut().expect("opened by metadata()");
         let transaction = client.transaction().await?;
         transaction
-            .batch_execute(
-                "SET LOCAL check_function_bodies = false; SET LOCAL lock_timeout = '10s'",
-            )
+            .batch_execute(&format!(
+                // Plans quote strings the standard way, whatever the database's default is.
+                "SET LOCAL lock_timeout = '10s'; SET LOCAL standard_conforming_strings = on; {setup}"
+            ))
             .await?;
         for (i, step) in plan.steps.iter().enumerate() {
-            if let Err(err) = transaction.batch_execute(&step.sql).await {
+            // The extended protocol runs exactly one statement, so a step can't
+            // carry another one past the review.
+            if let Err(err) = transaction.execute(step.sql.as_str(), &[]).await {
                 return Err(match Error::from(err) {
                     Error::Database {
                         message,
@@ -390,13 +418,15 @@ impl Session {
         Ok(())
     }
 
-    /// The schema unqualified names resolve to first, usually `public`.
+    /// The schema unqualified names resolve to first, usually `public`. While
+    /// the session is busy with a long query, or inside a failed transaction,
+    /// it's the schema last read rather than an error or a wait.
     pub async fn current_schema(&self) -> Result<Option<String>, Error> {
-        Ok(self
-            .client
-            .query_one("SELECT current_schema()", &[])
-            .await?
-            .get(0))
+        let query = self.client.query_one("SELECT current_schema()", &[]);
+        if let Ok(Ok(row)) = tokio::time::timeout(Duration::from_millis(500), query).await {
+            *self.default_schema.lock().unwrap() = row.get(0);
+        }
+        Ok(self.default_schema.lock().unwrap().clone())
     }
 
     /// Asks the server to cancel the statement this session is running, if any.

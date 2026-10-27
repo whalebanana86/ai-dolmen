@@ -333,7 +333,8 @@ export type Blocker =
   | { kind: "enumValuesRemoved"; name: string }
   | { kind: "tableKindChanged"; name: string }
   | { kind: "generatedColumnChanged"; name: string }
-  | { kind: "renameNoLongerApplies"; from: string; to: string };
+  | { kind: "renameNoLongerApplies"; from: string; to: string }
+  | { kind: "invalidDefinition"; name: string };
 
 export interface Plan {
   steps: { sql: string; destructive: boolean }[];
@@ -357,7 +358,10 @@ export const snapshots = {
   /** SSH addresses for an HTTPS repository URL, from the aliases in ~/.ssh/config. */
   sshAlternatives: (url: string) => invoke<string[]>("snapshot_ssh_alternatives", { url }),
   checkout: (url: string, path: string) =>
-    invoke<{ dir: string; clone: string; updated: boolean }>("snapshot_checkout", { url, path }),
+    invoke<{ dir: string; clone: string; updated: boolean; syncError: string | null }>("snapshot_checkout", {
+      url,
+      path,
+    }),
   status: (sessionId: number, dir: string) =>
     invoke<SnapshotStatus>("snapshot_status", { sessionId, dir }),
   /** Writes the snapshot into `dir`, commits it when a message is given, and pushes when asked. */

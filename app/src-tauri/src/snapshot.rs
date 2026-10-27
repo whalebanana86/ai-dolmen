@@ -27,6 +27,7 @@ pub struct SnapshotStatus {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Checkout {
     /// The snapshot folder inside the clone, for the other snapshot commands.
     dir: String,
@@ -34,6 +35,8 @@ pub struct Checkout {
     clone: String,
     /// Whether new commits arrived from the remote.
     updated: bool,
+    /// Why new commits couldn't be fetched, say offline; the clone still works.
+    sync_error: Option<String>,
 }
 
 /// Makes sure Dolmen's own clone of `url` exists and is up to date (fast-forward
@@ -45,10 +48,12 @@ pub async fn snapshot_checkout(
     app: AppHandle,
 ) -> Result<Checkout, Error> {
     let relative = Path::new(path.trim());
+    // Plain names only, and not into the clone's own Git folder.
     if path.trim().is_empty()
-        || !relative
-            .components()
-            .all(|c| matches!(c, Component::Normal(_)))
+        || !relative.components().all(|c| match c {
+            Component::Normal(name) => !name.eq_ignore_ascii_case(".git"),
+            _ => false,
+        })
     {
         return Err(refused(
             Refusal::BadSnapshotPath,
@@ -59,6 +64,7 @@ pub async fn snapshot_checkout(
         message: format!("no app data folder: {err}"),
     })?;
     let clone = data.join("repositories").join(git::clone_dir_name(&url));
+    let mut sync_error = None;
     let updated = if clone.join(".git").exists() {
         match git::origin_url(&clone)? {
             Some(origin) if origin == url => {}
@@ -76,7 +82,11 @@ pub async fn snapshot_checkout(
                 });
             }
         }
-        git::sync(&clone)?
+        // Offline, or the upstream is gone: the clone still works as it is.
+        git::sync(&clone).unwrap_or_else(|err| {
+            sync_error = Some(err.to_string());
+            false
+        })
     } else {
         git::clone(&url, &clone)?;
         false
@@ -85,6 +95,7 @@ pub async fn snapshot_checkout(
         dir: clone.join(relative).to_string_lossy().into_owned(),
         clone: clone.to_string_lossy().into_owned(),
         updated,
+        sync_error,
     })
 }
 

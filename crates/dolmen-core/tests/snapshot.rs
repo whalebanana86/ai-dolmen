@@ -744,3 +744,35 @@ async fn databases_follow_branch_switches() {
         .await
         .unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn refuses_links_and_leaves_repositories_in_the_folder_alone() {
+    let outside = TempDir::new().unwrap();
+    let victim = outside.path().join("important.sql");
+    std::fs::write(&victim, "keep me").unwrap();
+
+    let dir = TempDir::new().unwrap();
+    let folder = dir.path().join("schema");
+    Snapshot::of(&database()).write(&folder).unwrap();
+    // A link to a file outside, under a name the snapshot writes.
+    let users = folder.join("public").join("tables").join("users.sql");
+    std::fs::remove_file(&users).unwrap();
+    std::os::unix::fs::symlink(&victim, &users).unwrap();
+    let err = Snapshot::of(&database()).write(&folder).unwrap_err();
+    assert!(err.to_string().contains("symbolic link"), "{err}");
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
+
+    // A linked folder is refused too, without deleting what's in it.
+    std::fs::remove_file(&users).unwrap();
+    std::os::unix::fs::symlink(outside.path(), folder.join("loot")).unwrap();
+    assert!(Snapshot::of(&database()).write(&folder).is_err());
+    assert!(victim.exists());
+    std::fs::remove_file(folder.join("loot")).unwrap();
+
+    // A repository made right in the snapshot folder survives writes.
+    run_git(&folder, &["init", "--quiet"]);
+    Snapshot::of(&database()).write(&folder).unwrap();
+    Snapshot::of(&database()).write(&folder).unwrap();
+    run_git(&folder, &["status", "--short"]);
+}

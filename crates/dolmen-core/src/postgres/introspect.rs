@@ -47,10 +47,15 @@ pub(super) async fn foreign_keys(client: &impl GenericClient) -> Result<Vec<Fore
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                  JOIN pg_catalog.pg_class rc ON rc.oid = con.confrelid
                  JOIN pg_catalog.pg_namespace rn ON rn.oid = rc.relnamespace
-                 WHERE con.contype = 'f' AND {USER_SCHEMAS}
+                 WHERE con.contype = 'f' AND con.conparentid = 0 AND {USER_SCHEMAS}
+                   AND {} AND {} AND {}
                  ORDER BY n.nspname COLLATE \"C\", c.relname COLLATE \"C\", con.conname COLLATE \"C\"",
                 columns("conkey", "conrelid"),
                 columns("confkey", "confrelid"),
+                // Both tables must be in the model, which leaves out extensions' tables.
+                USER_SCHEMAS.replace("n.nspname", "rn.nspname"),
+                not_from_extension("c.oid"),
+                not_from_extension("rc.oid"),
             ),
             &[],
         )
@@ -241,6 +246,8 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                  FROM pg_catalog.pg_constraint con
                  JOIN pg_catalog.pg_namespace n ON n.oid = con.connamespace
                  WHERE con.contype IN ('p', 'u', 'c', 'f', 'x') AND con.conrelid <> 0
+                   -- Copies PostgreSQL keeps on partitions belong to the parent's constraint.
+                   AND con.conparentid = 0
                    AND {USER_SCHEMAS}
                  ORDER BY con.conrelid, con.conname COLLATE \"C\""
             ),

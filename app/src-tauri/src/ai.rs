@@ -28,18 +28,18 @@ impl Ai {
 }
 
 #[tauri::command]
-pub fn ai_key_status(ai: State<'_, Ai>) -> Result<KeyStatus, Error> {
+pub async fn ai_key_status(ai: State<'_, Ai>) -> Result<KeyStatus, Error> {
     ai.keys.status()
 }
 
 /// Keeps the API key in the OS credential store; it never comes back to the UI.
 #[tauri::command]
-pub fn ai_key_set(key: String, ai: State<'_, Ai>) -> Result<(), Error> {
+pub async fn ai_key_set(key: String, ai: State<'_, Ai>) -> Result<(), Error> {
     ai.keys.set(&key)
 }
 
 #[tauri::command]
-pub fn ai_key_forget(ai: State<'_, Ai>) -> Result<(), Error> {
+pub async fn ai_key_forget(ai: State<'_, Ai>) -> Result<(), Error> {
     ai.keys.forget()
 }
 
@@ -81,34 +81,41 @@ pub async fn ai_ask(
         reason: AiFailure::NoApiKey,
         message: "No Anthropic API key is saved; add one in the settings.".into(),
     })?;
-    let session = sessions.get(session_id)?;
-    let database = session.introspect().await?;
-    let default_schema = session.current_schema().await?;
-    let body = ai::request_body(
-        &model,
-        &Setting {
-            server_version: session.server_version(),
-            default_schema: default_schema.as_deref(),
-            database: &database,
-        },
-        &task,
-        &language,
-    );
-
+    // Stopping works from the start: reading the schema can take a while too.
     let (stop, stopped) = oneshot::channel();
     ai.running.lock().unwrap().insert(id, stop);
-    let answer = Client::new(key)
-        .stream(
-            &body,
-            |text| {
-                // The UI may be gone, e.g. after a reload; the answer is then just dropped.
-                let _ = on_text.send(text.to_owned());
+    let ask = async {
+        let session = sessions.get(session_id)?;
+        let database = session.introspect().await?;
+        let default_schema = session.current_schema().await?;
+        let body = ai::request_body(
+            &model,
+            &Setting {
+                server_version: session.server_version(),
+                default_schema: default_schema.as_deref(),
+                database: &database,
             },
-            async {
-                let _ = stopped.await;
-            },
-        )
-        .await;
+            &task,
+            &language,
+        );
+        Client::new(key)
+            .stream(
+                &body,
+                |text| {
+                    // The UI may be gone, e.g. after a reload; the answer is then just dropped.
+                    let _ = on_text.send(text.to_owned());
+                },
+                std::future::pending(),
+            )
+            .await
+    };
+    let answer = tokio::select! {
+        answer = ask => answer,
+        _ = stopped => Err(Error::Ai {
+            reason: AiFailure::Cancelled,
+            message: "stopped".into(),
+        }),
+    };
     ai.running.lock().unwrap().remove(&id);
     answer
 }

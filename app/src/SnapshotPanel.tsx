@@ -17,6 +17,8 @@ interface Props {
   remote: SnapshotRemote | null;
   /** Where Dolmen keeps its clone of `remote`. */
   clonePath: string | null;
+  /** Why pulling new commits failed, while the clone is used as it is. */
+  syncWarning: string | null;
   preparingRemote: boolean;
   onChooseDir: (dir: string) => void;
   onChooseRemote: (remote: SnapshotRemote) => void;
@@ -48,6 +50,7 @@ export function SnapshotPanel({
   dir,
   remote,
   clonePath,
+  syncWarning,
   preparingRemote,
   onChooseDir,
   onChooseRemote,
@@ -196,6 +199,7 @@ export function SnapshotPanel({
               <p className="muted">
                 {preparingRemote ? t.snapshot.gettingRepository : clonePath && t.snapshot.cloneLocation(clonePath)}
               </p>
+              {syncWarning && <p className="error-text">{syncWarning}</p>}
               <SshHint remote={remote} onChooseRemote={onChooseRemote} />
             </>
           ) : dir ? (

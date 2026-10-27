@@ -73,13 +73,21 @@ pub async fn pg_connect(
     sessions: State<'_, Sessions>,
     connections: State<'_, ConnectionStore>,
 ) -> Result<SessionInfo, Error> {
-    if let (None, Some(id)) = (&config.password, &saved_id) {
-        config.password = connections.password(id)?;
-    }
     let saved = match &saved_id {
         Some(id) => connections.list()?.into_iter().find(|c| &c.id == id),
         None => None,
     };
+    // The stored password goes only to the server it was saved for: a form
+    // edited without saving could otherwise send it somewhere else.
+    if let (None, Some(saved)) = (&config.password, &saved) {
+        let same_server = saved.host == config.host
+            && saved.port == config.port
+            && saved.user == config.user
+            && saved.database == config.database;
+        if same_server {
+            config.password = connections.password(&saved.id)?;
+        }
+    }
     let session = Session::connect(&config).await?;
     let id = sessions.next_id.fetch_add(1, Ordering::Relaxed);
     let connection = history::Connection {
@@ -207,7 +215,7 @@ pub async fn object_apply(
         ));
     }
     let started = Started::now();
-    let result = session.apply(&plan).await;
+    let result = session.apply_edit(&plan, edit.schema()).await;
     record_plan(
         &sessions,
         &history,

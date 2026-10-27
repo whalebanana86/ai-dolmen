@@ -280,6 +280,7 @@ export const en = {
     allSchemas: "All schemas",
     onlyRelated: (table: string) => `Only ${table} and its neighbors`,
     empty: "This schema has no tables.",
+    failed: (message: string) => `The ERD couldn't be drawn: ${message}`,
     help: "Drag to move tables, scroll to zoom. Click a table to pick out its relationships; double-click for its details.",
     legend: "Lines into",
     notation: "Ends",
@@ -322,6 +323,7 @@ export const en = {
     chooseFolderTitle: "Choose the schema snapshot folder",
     gettingRepository: "Getting the repository…",
     cloneLocation: (path: string) => `Dolmen keeps its copy in ${path} and pushes each commit.`,
+    syncFailed: (message: string) => `New commits couldn't be fetched, so this is the copy as it was: ${message}`,
     notInRepository: "Not inside a Git repository: the files can be written but not committed.",
     behind: (n: number) => `${n} behind`,
     publishBranch: "Publish branch",
@@ -410,6 +412,8 @@ export const en = {
       generatedColumnChanged: (name: string) =>
         `Column ${name}: turning it into a generated column, or changing whether it is stored, isn't supported.`,
       renameNoLongerApplies: (from: string, to: string) => `The rename of ${from} to ${to} no longer applies.`,
+      invalidDefinition: (name: string) =>
+        `${name}: its type or definition isn't a single expression or statement. A snapshot could hide extra SQL that way, so this plan won't run.`,
     },
     renamesIntro: "These drops look like renames. Renaming keeps the data:",
     renameTable: (from: string, to: string) => `Rename table ${from} → ${to}`,

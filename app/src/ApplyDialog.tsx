@@ -201,5 +201,7 @@ export function blockerText(blocker: Blocker, t: Messages) {
       return t.apply.blockers.generatedColumnChanged(blocker.name);
     case "renameNoLongerApplies":
       return t.apply.blockers.renameNoLongerApplies(blocker.from, blocker.to);
+    case "invalidDefinition":
+      return t.apply.blockers.invalidDefinition(blocker.name);
   }
 }

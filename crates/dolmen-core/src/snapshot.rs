@@ -161,6 +161,7 @@ impl Snapshot {
             files.insert(relative(dir, &path), content);
         }
         let model_path = dir.join(MODEL_FILE);
+        refuse_link(&model_path)?;
         let model_json = match fs::read_to_string(&model_path) {
             Ok(json) => Some(json),
             Err(err) if err.kind() == ErrorKind::NotFound => None,
@@ -214,6 +215,9 @@ impl Snapshot {
             });
         }
         fs::create_dir_all(dir).map_err(|err| io_error(dir, err))?;
+        for file in [&marker, &dir.join(".gitattributes"), &dir.join(MODEL_FILE)] {
+            refuse_link(file)?;
+        }
         if !marker.exists() {
             fs::write(&marker, MARKER_TEXT).map_err(|err| io_error(&marker, err))?;
             let attributes = dir.join(".gitattributes");
@@ -225,9 +229,13 @@ impl Snapshot {
             write_if_changed(&dir.join(MODEL_FILE), &model_json(database))?;
         }
 
+        // Reading refuses links anywhere in the folder, so the writes and
+        // removals below stay inside it.
         let existing = Snapshot::read(dir)?;
         for (path, content) in &self.files {
-            write_if_changed(&dir.join(path), content)?;
+            let file = dir.join(path);
+            refuse_links_below(dir, &file)?;
+            write_if_changed(&file, content)?;
         }
         for path in existing
             .files
@@ -235,6 +243,7 @@ impl Snapshot {
             .filter(|path| !self.files.contains_key(*path))
         {
             let file = dir.join(path);
+            refuse_links_below(dir, &file)?;
             fs::remove_file(&file).map_err(|err| io_error(&file, err))?;
         }
         remove_empty_dirs(dir)?;
@@ -300,6 +309,8 @@ pub fn file_name(name: &str) -> String {
     encoded
 }
 
+/// The `.sql` files under `dir`. Hidden folders, such as a `.git` of a
+/// repository made right in the folder, are left alone, and links are refused.
 fn sql_files(dir: &Path) -> Result<Vec<PathBuf>, Error> {
     let mut files = Vec::new();
     let entries = match fs::read_dir(dir) {
@@ -308,14 +319,52 @@ fn sql_files(dir: &Path) -> Result<Vec<PathBuf>, Error> {
         Err(err) => return Err(io_error(dir, err)),
     };
     for entry in entries {
-        let path = entry.map_err(|err| io_error(dir, err))?.path();
-        if path.is_dir() {
-            files.extend(sql_files(&path)?);
+        let entry = entry.map_err(|err| io_error(dir, err))?;
+        let path = entry.path();
+        // file_type doesn't follow links, unlike Path::is_dir.
+        let kind = entry.file_type().map_err(|err| io_error(&path, err))?;
+        if kind.is_symlink() {
+            return Err(link_error(&path));
+        } else if kind.is_dir() {
+            if !is_hidden(&path) {
+                files.extend(sql_files(&path)?);
+            }
         } else if path.extension().is_some_and(|ext| ext == "sql") {
             files.push(path);
         }
     }
     Ok(files)
+}
+
+fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+}
+
+/// Snapshot folders hold plain files and folders. A symbolic link, say in a
+/// cloned repository, could send writes and removals outside the folder.
+fn refuse_link(path: &Path) -> Result<(), Error> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(link_error(path)),
+        _ => Ok(()),
+    }
+}
+
+/// Refuses `path` when it, or a folder between `dir` and it, is a link.
+fn refuse_links_below(dir: &Path, path: &Path) -> Result<(), Error> {
+    for ancestor in path.ancestors().take_while(|a| *a != dir) {
+        refuse_link(ancestor)?;
+    }
+    Ok(())
+}
+
+fn link_error(path: &Path) -> Error {
+    Error::Storage {
+        message: format!(
+            "{} is a symbolic link; a snapshot folder may only hold plain files and folders",
+            path.display()
+        ),
+    }
 }
 
 fn relative(dir: &Path, path: &Path) -> String {
@@ -338,11 +387,14 @@ fn is_empty_or_missing(dir: &Path) -> Result<bool, Error> {
     }
 }
 
-/// Removes folders under `dir` (not `dir` itself) that have nothing left in them.
+/// Removes folders under `dir` (not `dir` itself) that have nothing left in
+/// them, leaving hidden folders and links alone.
 fn remove_empty_dirs(dir: &Path) -> Result<(), Error> {
     for entry in fs::read_dir(dir).map_err(|err| io_error(dir, err))? {
-        let path = entry.map_err(|err| io_error(dir, err))?.path();
-        if path.is_dir() {
+        let entry = entry.map_err(|err| io_error(dir, err))?;
+        let path = entry.path();
+        let kind = entry.file_type().map_err(|err| io_error(&path, err))?;
+        if kind.is_dir() && !is_hidden(&path) {
             remove_empty_dirs(&path)?;
             if fs::read_dir(&path)
                 .map_err(|err| io_error(&path, err))?

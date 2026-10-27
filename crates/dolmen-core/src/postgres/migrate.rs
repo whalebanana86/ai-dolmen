@@ -46,11 +46,19 @@ pub enum Blocker {
     GeneratedColumnChanged { name: String },
     /// A rename asked for no longer matches the database or the snapshot.
     RenameNoLongerApplies { from: String, to: String },
+    /// A type, expression or definition in the target isn't one expression or
+    /// statement, or hides text with bidirectional controls: a snapshot from
+    /// a repository could smuggle extra statements into a plan that way.
+    InvalidDefinition { name: String },
 }
 
 impl fmt::Display for Blocker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Blocker::InvalidDefinition { name } => write!(
+                f,
+                "{name}: its definition isn't a single expression or statement, so the plan won't run it."
+            ),
             Blocker::EnumValuesRemoved { name } => write!(
                 f,
                 "Enum {name}: removing or reordering values isn't supported; only adding values is."
@@ -135,6 +143,7 @@ fn plan_with(
     target: &Database,
     renames: &[Rename],
 ) -> Plan {
+    planner.blockers.extend(invalid_definitions(target));
     let mut current = current.clone();
     for rename in renames {
         planner.rename(&mut current, target, rename);
@@ -182,11 +191,16 @@ struct Planner {
 }
 
 impl Planner {
+    /// Adds the statements in `sql` as steps, one statement each, which is
+    /// how [`Session::apply`](crate::postgres::Session::apply) runs them.
     fn push(&mut self, phase: Phase, sql: String, destructive: bool) {
-        self.phases.entry(phase).or_default().push(Step {
-            sql: sql.trim_end().to_owned(),
-            destructive,
-        });
+        let steps = self.phases.entry(phase).or_default();
+        for step in statements(&sql) {
+            steps.push(Step {
+                sql: step,
+                destructive,
+            });
+        }
     }
 
     fn finish(self) -> Plan {
@@ -355,7 +369,8 @@ impl Planner {
                 .functions
                 .iter()
                 .find(|f| same_function(f, function));
-            if existing.is_none_or(|f| f.definition != function.definition) {
+            // pg_get_functiondef ends with a newline that edits don't keep.
+            if existing.is_none_or(|f| f.definition.trim_end() != function.definition.trim_end()) {
                 self.push(Phase::Function, ddl::create_function(function), false);
             }
         }
@@ -776,6 +791,83 @@ impl Planner {
     }
 }
 
+/// The statements in generated SQL, each with its `;`. Definitions were
+/// checked by [`invalid_definitions`] first, so every `;` here is one the
+/// generator wrote.
+pub(crate) fn statements(sql: &str) -> Vec<String> {
+    crate::sql::split_statements(sql)
+        .into_iter()
+        .map(|range| sql[range].trim().to_owned())
+        .collect()
+}
+
+/// Definitions in `database` that aren't one expression or one statement.
+///
+/// Types, defaults, expressions and constraint, index, view and function
+/// definitions go into the plan as they are, since they come from the
+/// server's own pg_get_*def functions. A snapshot model from a repository
+/// may hold anything, though, and a `;` would end the step's statement and
+/// start another one the review wouldn't flag.
+fn invalid_definitions(database: &Database) -> Vec<Blocker> {
+    let mut blockers = Vec::new();
+    let mut check = |name: String, text: &str, statement: bool| {
+        if !single(text, statement) {
+            blockers.push(Blocker::InvalidDefinition { name });
+        }
+    };
+    for schema in &database.schemas {
+        let name = |object: &str| format!("{}.{object}", schema.name);
+        for table in &schema.tables {
+            let table_name = name(&table.name);
+            for column in &table.columns {
+                let column_name = format!("{table_name}.{}", column.name);
+                check(column_name.clone(), &column.data_type, false);
+                if let Some(default) = &column.default {
+                    check(column_name.clone(), default, false);
+                }
+                if let Some(generated) = &column.generated {
+                    check(column_name, &generated.expression, false);
+                }
+            }
+            for constraint in &table.constraints {
+                check(
+                    format!("{table_name}.{}", constraint.name),
+                    &constraint.definition,
+                    false,
+                );
+            }
+            for index in &table.indexes {
+                check(name(&index.name), &index.definition, true);
+            }
+            if let Some(key) = &table.partition_key {
+                check(table_name.clone(), key, false);
+            }
+        }
+        for view in &schema.views {
+            check(name(&view.name), &view.definition, true);
+        }
+        for function in &schema.functions {
+            check(name(&function.name), &function.definition, true);
+        }
+    }
+    blockers
+}
+
+/// Whether `text` is one statement (when `statement` is set) or an expression
+/// with no statement-ending `;`, free of bidirectional text controls.
+pub(crate) fn single(text: &str, statement: bool) -> bool {
+    let bidi = text
+        .chars()
+        .any(|c| matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'));
+    let ranges = crate::sql::split_statements(text);
+    let one = match ranges.as_slice() {
+        [] => !statement,
+        [range] => statement || !text[range.clone()].trim_end().ends_with(';'),
+        _ => false,
+    };
+    one && !bidi
+}
+
 type ViewKey = (String, String);
 
 fn all_views(database: &Database) -> BTreeMap<ViewKey, &View> {
@@ -941,6 +1033,45 @@ mod tests {
 
     fn sql(plan: &Plan) -> Vec<&str> {
         plan.steps.iter().map(|s| s.sql.as_str()).collect()
+    }
+
+    #[test]
+    fn refuses_definitions_that_hold_more_than_one_statement() {
+        let current = database(app(vec![table("t", vec![column("id", "integer")], vec![])]));
+        let mut target = current.clone();
+        let smuggled = column("note", "text; DROP TABLE app.t; --");
+        target.schemas[0].tables[0].columns.push(smuggled);
+        let planned = plan(&current, &target, &[]);
+        assert_eq!(
+            planned.blockers,
+            [Blocker::InvalidDefinition {
+                name: "app.t.note".into()
+            }]
+        );
+
+        // Defaults and checks with semicolons in their strings are fine.
+        let mut target = current.clone();
+        let mut note = column("note", "text");
+        note.default = Some("'a;b'::text".into());
+        target.schemas[0].tables[0].columns.push(note);
+        target.schemas[0].tables[0].constraints.push(constraint(
+            "t_check",
+            ConstraintKind::Check,
+            "CHECK (id <> 0)",
+        ));
+        let planned = plan(&current, &target, &[]);
+        assert!(planned.blockers.is_empty(), "{:?}", planned.blockers);
+        // Each step is one statement.
+        assert!(
+            planned
+                .steps
+                .iter()
+                .all(|s| crate::sql::split_statements(&s.sql).len() == 1)
+        );
+
+        let mut target = current.clone();
+        target.schemas[0].tables[0].columns[0].data_type = "integer\u{202E}".into();
+        assert!(!plan(&current, &target, &[]).blockers.is_empty());
     }
 
     #[test]

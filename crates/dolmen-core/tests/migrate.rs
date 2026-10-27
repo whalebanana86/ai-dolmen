@@ -434,7 +434,10 @@ async fn creates_tables_views_and_functions_from_the_detail_view() {
         let session = &session;
         async move {
             let plan = edit::plan(&session.introspect().await.unwrap(), &edit).unwrap();
-            apply(session, &plan).await;
+            session
+                .apply_edit(&plan, edit.schema())
+                .await
+                .unwrap_or_else(|err| panic!("{err}"));
         }
     };
     create(Edit::CreateTable {
@@ -448,7 +451,8 @@ async fn creates_tables_views_and_functions_from_the_detail_view() {
             name: "titles".into(),
             materialized: false,
             columns: vec![],
-            definition: "SELECT title FROM create_test.posts".into(),
+            // Written as a user would: unqualified, resolved in the view's schema.
+            definition: "SELECT title FROM posts".into(),
             comment: None,
         },
     })
@@ -476,4 +480,44 @@ async fn creates_tables_views_and_functions_from_the_detail_view() {
             .any(|k| k.table == "posts" && k.on_delete == "CASCADE")
     );
     run(&session, "DROP SCHEMA create_test CASCADE").await;
+}
+
+#[tokio::test]
+async fn runs_each_step_as_exactly_one_statement() {
+    use dolmen_core::postgres::migrate::Step;
+
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let _exclusive = exclusive().await;
+    run(
+        &session,
+        "DROP SCHEMA IF EXISTS one_test CASCADE; CREATE SCHEMA one_test; CREATE TABLE one_test.keep (id int)",
+    )
+    .await;
+    // A step carrying a second statement, as a doctored snapshot could.
+    let smuggled = Plan {
+        steps: vec![Step {
+            sql: "ALTER TABLE one_test.keep ADD COLUMN note text; DROP TABLE one_test.keep".into(),
+            destructive: false,
+        }],
+        blockers: vec![],
+        rename_candidates: vec![],
+    };
+    assert!(session.apply(&smuggled).await.is_err());
+    let rows = session
+        .execute("SELECT count(*) FROM one_test.keep", 1)
+        .await
+        .expect("the table is still there");
+    assert_eq!(rows.len(), 1);
+    run(&session, "DROP SCHEMA one_test CASCADE").await;
+}
+
+#[tokio::test]
+async fn knows_the_default_schema_inside_a_failed_transaction() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let before = session.current_schema().await.unwrap();
+    assert!(session.execute("BEGIN; SELECT 1 / 0", 0).await.is_err());
+    assert_eq!(session.current_schema().await.unwrap(), before);
+    run(&session, "ROLLBACK").await;
 }

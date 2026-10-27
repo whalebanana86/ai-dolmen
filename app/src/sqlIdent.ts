@@ -1,6 +1,6 @@
 import type { Table } from "./api";
 
-// PostgreSQL's reserved key words: names that must be quoted to be used as identifiers.
+// PostgreSQL's key words that aren't unreserved: names that must be quoted to be used as identifiers.
 const RESERVED = new Set(
   (
     "all analyse analyze and any array as asc asymmetric both case cast check collate column " +
@@ -9,7 +9,11 @@ const RESERVED = new Set(
     "grant group having in initially intersect into lateral leading limit localtime localtimestamp " +
     "not null offset on only or order placing primary references returning select session_user " +
     "some symmetric system_user table then to trailing true union unique user using variadic when " +
-    "where window with"
+    "where window with " +
+    // Type and function name keywords, and column name keywords: PostgreSQL
+    // quotes every keyword that isn't unreserved, and so do we.
+    "authorization binary collation concurrently cross current_schema freeze full ilike inner is isnull join left like natural notnull outer overlaps right similar tablesample verbose " +
+    "between bigint bit boolean char character coalesce dec decimal exists extract float greatest grouping inout int integer interval json json_array json_arrayagg json_exists json_object json_objectagg json_query json_scalar json_serialize json_table json_value least merge_action national nchar none normalize nullif numeric out overlay position precision real row setof smallint substring time timestamp treat trim values varchar xmlattributes xmlconcat xmlelement xmlexists xmlforest xmlnamespaces xmlparse xmlpi xmlroot xmlserialize xmltable"
   ).split(" "),
 );
 

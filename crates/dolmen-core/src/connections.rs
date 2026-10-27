@@ -104,10 +104,12 @@ impl ConnectionStore {
         password: PasswordChange,
     ) -> Result<SavedConnection, Error> {
         let mut file = self.read()?;
-        if connection.id.is_empty() {
+        let existing = file.connections.iter().position(|c| c.id == connection.id);
+        // An id the store didn't hand out is a new connection, so it can't
+        // name another credential store entry.
+        if existing.is_none() {
             connection.id = uuid::Uuid::new_v4().to_string();
         }
-        let existing = file.connections.iter().position(|c| c.id == connection.id);
 
         connection.has_password = match password {
             PasswordChange::Keep => existing.is_some_and(|i| file.connections[i].has_password),
@@ -131,6 +133,9 @@ impl ConnectionStore {
 
     pub fn delete(&self, id: &str) -> Result<(), Error> {
         let mut file = self.read()?;
+        if !file.connections.iter().any(|c| c.id == id) {
+            return Ok(());
+        }
         file.connections.retain(|c| c.id != id);
         self.write(&file)?;
         self.forget_password(id)
@@ -138,6 +143,9 @@ impl ConnectionStore {
 
     /// The stored password of a saved connection, or `None` if it has none.
     pub fn password(&self, id: &str) -> Result<Option<String>, Error> {
+        if !self.read()?.connections.iter().any(|c| c.id == id) {
+            return Ok(None);
+        }
         match self.entry(id)?.get_password() {
             Ok(password) => Ok(Some(password)),
             Err(keyring_core::Error::NoEntry) => Ok(None),

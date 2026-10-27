@@ -157,3 +157,29 @@ fn round_trips_through_the_native_credential_store() {
     assert_eq!(password.unwrap().as_deref(), Some("dolmen-test-password"));
     assert_eq!(store.password(&saved.id).unwrap(), None);
 }
+
+#[test]
+fn ids_the_store_did_not_hand_out_name_no_credentials() {
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    // Another entry in the same credential store, such as the AI's API key.
+    let other = fixture
+        .credentials
+        .build("Dolmen", "anthropic-api-key", None)
+        .unwrap();
+    other.set_password("sk-secret").unwrap();
+
+    assert_eq!(store.password("anthropic-api-key").unwrap(), None);
+    let saved = store
+        .save(
+            SavedConnection {
+                id: "anthropic-api-key".into(),
+                ..local()
+            },
+            set("pw"),
+        )
+        .unwrap();
+    assert_ne!(saved.id, "anthropic-api-key");
+    store.delete("anthropic-api-key").unwrap();
+    assert_eq!(other.get_password().unwrap(), "sk-secret");
+}

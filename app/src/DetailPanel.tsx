@@ -855,7 +855,7 @@ function TableEditor({
     const edited: Table = {
       ...table,
       name: tableName,
-      comment: comment.trim() || null,
+      comment: sameText(comment, table.comment) ? table.comment : comment.trim() || null,
       columns: kept.map((c) => ({
         name: c.name.trim(),
         dataType: c.dataType.trim(),
@@ -864,7 +864,7 @@ function TableEditor({
         default: c.original?.generated || c.identity ? null : c.default.trim() || null,
         identity: c.identity,
         generated: c.original?.generated ?? null,
-        comment: c.comment.trim() || null,
+        comment: c.original && sameText(c.comment, c.original.comment) ? c.original.comment : c.comment.trim() || null,
       })),
       constraints: constraints
         .filter((d) => !d.removed)
@@ -1314,7 +1314,13 @@ function ViewEditor({
     <EditFlow
       sessionId={sessionId}
       build={() => {
-        const edited = { ...view, name: name.trim(), materialized, definition, comment: comment.trim() || null };
+        const edited = {
+          ...view,
+          name: name.trim(),
+          materialized,
+          definition,
+          comment: sameText(comment, view.comment) ? view.comment : comment.trim() || null,
+        };
         if (!creating) return { kind: "view", schema, name: view.name, view: edited };
         if (!edited.name) throw new Error(t.detail.editing.emptyName);
         return { kind: "createView", schema, view: edited };
@@ -1393,6 +1399,11 @@ function FunctionEditor({
       </label>
     </EditFlow>
   );
+}
+
+/** Whether text typed in a form says the same as the stored value, ignoring surrounding space. */
+function sameText(typed: string, stored: string | null) {
+  return typed.trim() === (stored ?? "").trim();
 }
 
 function columnDefault(column: Column, t: Messages) {

@@ -21,6 +21,7 @@ import {
 } from "./api";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
 import { CreatePanel, DetailPanel } from "./DetailPanel";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { HistoryPanel } from "./HistoryPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
@@ -159,6 +160,8 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     connection?.snapshotRemote ? null : (connection?.snapshotDir ?? null),
   );
   const [clonePath, setClonePath] = useState<string | null>(null);
+  /** Why the last pull failed, while the clone is used as it is. */
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const [preparingRemote, setPreparingRemote] = useState(false);
   const [snapshotStatus, setSnapshotStatus] = useState<SnapshotStatus | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
@@ -187,6 +190,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       setClonePath(checkout.clone);
       setSnapshotDir(checkout.dir);
       setSnapshotError(null);
+      setSyncWarning(checkout.syncError && tRef.current.snapshot.syncFailed(checkout.syncError));
       return checkout;
     } catch (error) {
       setSnapshotError(errorMessage(error, tRef.current));
@@ -511,15 +515,33 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         </div>
       </div>
       {erd && introspection && (
-        <Suspense fallback={null}>
-          <ErdView
-            introspection={introspection}
-            schema={erd.schema}
-            focus={erd.focus}
-            onOpenDetail={setDetail}
-            onClose={() => setErd(null)}
-          />
-        </Suspense>
+        <ErrorBoundary
+          fallback={(error) => (
+            <div className="dialog-backdrop" onMouseDown={() => setErd(null)}>
+              <div className="dialog" role="alertdialog">
+                <div className="dialog-body">
+                  <p className="error-text">{t.erd.failed(error.message)}</p>
+                </div>
+                <footer className="dialog-footer">
+                  <div className="actions">
+                    <span className="spacer" />
+                    <button onClick={() => setErd(null)}>{t.common.close}</button>
+                  </div>
+                </footer>
+              </div>
+            </div>
+          )}
+        >
+          <Suspense fallback={null}>
+            <ErdView
+              introspection={introspection}
+              schema={erd.schema}
+              focus={erd.focus}
+              onOpenDetail={setDetail}
+              onClose={() => setErd(null)}
+            />
+          </Suspense>
+        </ErrorBoundary>
       )}
       {detail && introspection && (
         <DetailPanel
@@ -595,6 +617,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           dir={snapshotDir}
           remote={snapshotRemote}
           clonePath={clonePath}
+          syncWarning={syncWarning}
           preparingRemote={preparingRemote}
           onChooseDir={chooseSnapshotDir}
           onChooseRemote={chooseSnapshotRemote}

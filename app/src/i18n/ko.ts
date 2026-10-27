@@ -274,6 +274,7 @@ export const ko: Messages = {
     allSchemas: "모든 스키마",
     onlyRelated: (table) => `${table}와(과) 바로 연결된 테이블만`,
     empty: "이 스키마에는 테이블이 없습니다.",
+    failed: (message) => `ERD를 그리지 못했습니다: ${message}`,
     help: "테이블을 끌어서 옮기고, 스크롤로 확대·축소합니다. 테이블을 클릭하면 그 관계만 강조되고, 두 번 클릭하면 상세가 열립니다.",
     legend: "선 색 = 참조 대상",
     notation: "선 끝 표기",
@@ -316,6 +317,7 @@ export const ko: Messages = {
     chooseFolderTitle: "스키마 스냅샷 폴더 선택",
     gettingRepository: "저장소를 가져오는 중…",
     cloneLocation: (path) => `Dolmen이 ${path}에 사본을 두고 커밋할 때마다 푸시합니다.`,
+    syncFailed: (message) => `새 커밋을 받아 오지 못해 지금 있는 사본으로 보여 줍니다: ${message}`,
     notInRepository: "Git 저장소 안이 아닙니다. 파일은 쓸 수 있지만 커밋할 수는 없습니다.",
     behind: (n) => `${n}개 뒤처짐`,
     publishBranch: "브랜치 올리기",
@@ -402,6 +404,8 @@ export const ko: Messages = {
       generatedColumnChanged: (name) =>
         `컬럼 ${name}: 일반 컬럼을 생성 컬럼으로 바꾸거나 저장 방식을 바꿀 수는 없습니다.`,
       renameNoLongerApplies: (from, to) => `${from}을(를) ${to}(으)로 바꾸는 이름 변경은 더 이상 맞지 않습니다.`,
+      invalidDefinition: (name) =>
+        `${name}: 타입이나 정의가 하나의 식이나 문장이 아닙니다. 스냅샷이 이런 식으로 다른 SQL을 숨길 수 있어 이 계획은 실행하지 않습니다.`,
     },
     renamesIntro: "아래 삭제는 이름 변경으로 보입니다. 이름을 바꾸면 데이터가 유지됩니다:",
     renameTable: (from, to) => `테이블 이름 변경 ${from} → ${to}`,

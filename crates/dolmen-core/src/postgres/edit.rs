@@ -51,6 +51,20 @@ pub enum Edit {
     CreateFunction { schema: String, definition: String },
 }
 
+impl Edit {
+    /// The schema the edited or new object is in.
+    pub fn schema(&self) -> &str {
+        match self {
+            Edit::Table { schema, .. }
+            | Edit::View { schema, .. }
+            | Edit::Function { schema, .. }
+            | Edit::CreateTable { schema, .. }
+            | Edit::CreateView { schema, .. }
+            | Edit::CreateFunction { schema, .. } => schema,
+        }
+    }
+}
+
 /// The steps that make the object in `current` match the edit.
 pub fn plan(current: &Database, edit: &Edit) -> Result<Plan, Error> {
     let mut target = current.clone();
@@ -97,6 +111,7 @@ pub fn plan(current: &Database, edit: &Edit) -> Result<Plan, Error> {
                     "renaming a view or changing whether it is materialized",
                 ));
             }
+            check_query(view)?;
             return Ok(view_plan(schema, current_view, view));
         }
         Edit::Function {
@@ -123,9 +138,7 @@ pub fn plan(current: &Database, edit: &Edit) -> Result<Plan, Error> {
         }
         Edit::CreateView { schema, view } => {
             check_new_relation(schema_mut(&mut target, schema)?, &view.name)?;
-            if view.definition.trim().is_empty() {
-                return Err(invalid("the view needs a query"));
-            }
+            check_query(view)?;
             return Ok(steps_plan([ddl::create_view(schema, view)]));
         }
         Edit::CreateFunction { schema, definition } => {
@@ -148,9 +161,9 @@ pub fn plan(current: &Database, edit: &Edit) -> Result<Plan, Error> {
                 }
                 _ => false,
             };
-            if !creates {
+            if !creates || crate::sql::split_statements(statement).len() != 1 {
                 return Err(invalid(
-                    "write a CREATE FUNCTION or CREATE PROCEDURE statement",
+                    "write one CREATE FUNCTION or CREATE PROCEDURE statement",
                 ));
             }
             return Ok(steps_plan([format!("{statement};")]));
@@ -189,19 +202,33 @@ fn view_plan(schema: &str, current: &View, target: &View) -> Plan {
     steps_plan(steps)
 }
 
-/// A plan of statements that lose no data, run in order.
+/// A plan of statements that lose no data, run in order, one statement a step.
 fn steps_plan(steps: impl IntoIterator<Item = String>) -> Plan {
     Plan {
         steps: steps
             .into_iter()
+            .flat_map(|sql| migrate::statements(&sql))
             .map(|sql| Step {
-                sql: sql.trim_end().to_owned(),
+                sql,
                 destructive: false,
             })
             .collect(),
         blockers: Vec::new(),
         rename_candidates: Vec::new(),
     }
+}
+
+/// A view's query must be one statement, so its step can't run another.
+fn check_query(view: &View) -> Result<(), Error> {
+    if view.definition.trim().is_empty() {
+        return Err(invalid("the view needs a query"));
+    }
+    if !migrate::single(&view.definition, true) {
+        return Err(invalid(
+            "the view's query must be a single SELECT statement",
+        ));
+    }
+    Ok(())
 }
 
 /// Tables, views and sequences share their schema's names, so a new one needs a free name.
@@ -401,7 +428,8 @@ mod tests {
         assert_eq!(
             sql(&plan(&database(), &edit).unwrap()),
             [
-                "CREATE VIEW app.names AS\nSELECT name FROM app.users;\n\nCOMMENT ON VIEW app.names IS 'just names';"
+                "CREATE VIEW app.names AS\nSELECT name FROM app.users;",
+                "COMMENT ON VIEW app.names IS 'just names';"
             ]
         );
 

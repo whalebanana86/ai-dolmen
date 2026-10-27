@@ -996,10 +996,12 @@ code {
   font-size: 12px;
 }
 
+/* Statements wrap, so nothing can hide past the right edge of a step. */
 .plan-steps pre {
   margin: 0;
   padding: 6px 10px;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);

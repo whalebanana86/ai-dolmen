@@ -422,7 +422,11 @@ function buildDiagram(
 
   const inScope = (s: string, table: string) =>
     focus !== null ? s === schema && table === focus : schema === null || s === schema;
-  const touching = foreignKeys.filter(
+  // Only keys between tables the model has, which an extension's tables aren't.
+  const known = foreignKeys.filter(
+    (fk) => tables.has(id(fk.schema, fk.table)) && tables.has(id(fk.referencedSchema, fk.referencedTable)),
+  );
+  const touching = known.filter(
     (fk) => inScope(fk.schema, fk.table) || inScope(fk.referencedSchema, fk.referencedTable),
   );
   const shown = new Set<string>();
@@ -432,7 +436,7 @@ function buildDiagram(
     shown.add(id(fk.referencedSchema, fk.referencedTable));
   }
   // With a focus, keys between the neighbors show too.
-  const keys = foreignKeys.filter(
+  const keys = known.filter(
     (fk) => shown.has(id(fk.schema, fk.table)) && shown.has(id(fk.referencedSchema, fk.referencedTable)),
   );
 

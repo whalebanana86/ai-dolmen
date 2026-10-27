@@ -206,7 +206,20 @@ pub fn clone(url: &str, into: &Path) -> Result<(), Error> {
     std::fs::create_dir_all(parent)
         .map_err(|err| storage(format!("{}: {err}", parent.display())))?;
     let into = into.to_string_lossy();
-    run(parent, &["clone", "--quiet", "--", url, &into])?;
+    // Links are checked out as plain files: a repository's links could
+    // otherwise point the snapshot's writes outside the clone.
+    run(
+        parent,
+        &[
+            "clone",
+            "--quiet",
+            "--config",
+            "core.symlinks=false",
+            "--",
+            url,
+            &into,
+        ],
+    )?;
     Ok(())
 }
 
@@ -345,7 +358,7 @@ fn clone_dir_name_with(url: &str, ssh_config: &str) -> String {
         }
     }
     let name = name.trim_matches('_');
-    if name.is_empty() {
+    if name.is_empty() || name.chars().all(|c| c == '.') {
         "repository".to_owned()
     } else {
         name.to_owned()
@@ -747,6 +760,8 @@ Host *
         assert_eq!(name("ssh://git@gh-alt/a/b.git"), "github.com_a_b");
         assert_eq!(name("/srv/git/schema.git"), "srv_git_schema");
         assert_eq!(name("@@@"), "repository");
+        assert_eq!(name(".."), "repository");
+        assert_eq!(name("../"), "repository");
     }
 
     #[test]

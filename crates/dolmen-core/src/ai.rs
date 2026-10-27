@@ -192,6 +192,8 @@ impl Client {
             .connect_timeout(Duration::from_secs(30))
             // The API sends pings while it thinks, so a long silence means a broken connection.
             .read_timeout(Duration::from_secs(300))
+            // The API key travels in a header that redirects would carry along.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("the HTTP client's settings are valid");
         Self {

@@ -235,7 +235,8 @@ pub fn qualified(schema: &str, name: &str) -> String {
     format!("{}.{}", quote_ident(schema), quote_ident(name))
 }
 
-/// Quotes an identifier unless it is a plain lower-case name that isn't a reserved word.
+/// Quotes an identifier unless it is a plain lower-case name that isn't a
+/// keyword PostgreSQL restricts, as PostgreSQL's own `quote_ident` does.
 pub fn quote_ident(name: &str) -> String {
     let plain = name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
         && name
@@ -253,7 +254,8 @@ pub(crate) fn quote_literal(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
-/// PostgreSQL's reserved key words, which need quotes to be used as names.
+/// PostgreSQL's key words that aren't unreserved: reserved ones, and the type,
+/// function and column name ones, which can't be used as every kind of name.
 const RESERVED: &[&str] = &[
     "all",
     "analyse",
@@ -333,6 +335,94 @@ const RESERVED: &[&str] = &[
     "where",
     "window",
     "with",
+    // Type and function name keywords: allowed as column names only.
+    "authorization",
+    "binary",
+    "collation",
+    "concurrently",
+    "cross",
+    "current_schema",
+    "freeze",
+    "full",
+    "ilike",
+    "inner",
+    "is",
+    "isnull",
+    "join",
+    "left",
+    "like",
+    "natural",
+    "notnull",
+    "outer",
+    "overlaps",
+    "right",
+    "similar",
+    "tablesample",
+    "verbose",
+    // Column name keywords: not allowed as type or function names.
+    "between",
+    "bigint",
+    "bit",
+    "boolean",
+    "char",
+    "character",
+    "coalesce",
+    "dec",
+    "decimal",
+    "exists",
+    "extract",
+    "float",
+    "greatest",
+    "grouping",
+    "inout",
+    "int",
+    "integer",
+    "interval",
+    "json",
+    "json_array",
+    "json_arrayagg",
+    "json_exists",
+    "json_object",
+    "json_objectagg",
+    "json_query",
+    "json_scalar",
+    "json_serialize",
+    "json_table",
+    "json_value",
+    "least",
+    "merge_action",
+    "national",
+    "nchar",
+    "none",
+    "normalize",
+    "nullif",
+    "numeric",
+    "out",
+    "overlay",
+    "position",
+    "precision",
+    "real",
+    "row",
+    "setof",
+    "smallint",
+    "substring",
+    "time",
+    "timestamp",
+    "treat",
+    "trim",
+    "values",
+    "varchar",
+    "xmlattributes",
+    "xmlconcat",
+    "xmlelement",
+    "xmlexists",
+    "xmlforest",
+    "xmlnamespaces",
+    "xmlparse",
+    "xmlpi",
+    "xmlroot",
+    "xmlserialize",
+    "xmltable",
 ];
 
 #[cfg(test)]
@@ -361,6 +451,14 @@ mod tests {
         assert_eq!(quote_ident("1st"), "\"1st\"");
         assert_eq!(quote_ident("사람"), "\"사람\"");
         assert_eq!(quote_ident("say \"hi\""), "\"say \"\"hi\"\"\"");
+        // Keywords that aren't unreserved, like PostgreSQL's quote_ident.
+        for keyword in ["left", "join", "position", "time", "values", "verbose"] {
+            assert_eq!(quote_ident(keyword), format!("\"{keyword}\""));
+        }
+        // Unreserved ones stay plain.
+        for word in ["name", "type", "data", "key", "status"] {
+            assert_eq!(quote_ident(word), word);
+        }
     }
 
     #[test]
