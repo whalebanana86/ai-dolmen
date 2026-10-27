@@ -19,7 +19,7 @@ import {
   sqlText,
 } from "./api";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
-import { DetailPanel } from "./DetailPanel";
+import { CreatePanel, DetailPanel } from "./DetailPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
 import { ResultView } from "./ResultView";
@@ -79,6 +79,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   const [aiPrompting, setAiPrompting] = useState(false);
   const { layout, update: updateLayout, toggle: togglePanel } = useLayout();
   const [detail, setDetail] = useState<ObjectRef | null>(null);
+  const [creating, setCreating] = useState<{ type: "table" | "view" | "function"; schema: string } | null>(null);
   const [erd, setErd] = useState<{ schema: string | null; focus: string | null } | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
 
@@ -98,12 +99,15 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
 
   const refreshSchema = useCallback(() => {
     setLoadingSchema(true);
-    pg.introspect(session.id)
+    return pg
+      .introspect(session.id)
       .then(setIntrospection)
       .catch((error) => console.error("loading the database structure failed", error))
       .finally(() => setLoadingSchema(false));
   }, [session.id]);
-  useEffect(refreshSchema, [refreshSchema]);
+  useEffect(() => {
+    refreshSchema();
+  }, [refreshSchema]);
 
   // An unsaved connection can still snapshot; its location is just not remembered.
   // With a remote, snapshotDir is the folder inside Dolmen's clone once it's ready.
@@ -377,6 +381,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                 showDdl,
                 showDetail: setDetail,
                 showErd: (schema, focus) => setErd({ schema, focus }),
+                create: (schema, type) => setCreating({ schema, type }),
               }}
               width={layout.treeWidth}
             />
@@ -483,6 +488,29 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             if (renamed) setDetail(renamed);
           }}
           onClose={() => setDetail(null)}
+          width={layout.detailWidth}
+          onResize={(detailWidth) => updateLayout({ detailWidth })}
+          onResetWidth={() => updateLayout({ detailWidth: defaultLayout().detailWidth })}
+        />
+      )}
+      {creating && introspection && (
+        <CreatePanel
+          sessionId={session.id}
+          introspection={introspection}
+          type={creating.type}
+          schema={creating.schema}
+          onCreated={async (created) => {
+            setCreating(null);
+            refreshSnapshot();
+            // Show the new object's details once the tree knows it.
+            await refreshSchema();
+            if (created) setDetail(created);
+          }}
+          onInsert={(sql) => {
+            setCreating(null);
+            insertStatement(sql, false);
+          }}
+          onClose={() => setCreating(null)}
           width={layout.detailWidth}
           onResize={(detailWidth) => updateLayout({ detailWidth })}
           onResetWidth={() => updateLayout({ detailWidth: defaultLayout().detailWidth })}

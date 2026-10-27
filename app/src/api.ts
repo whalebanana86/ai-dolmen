@@ -150,7 +150,11 @@ export type ObjectEdit =
       renamedColumns: [string, string][];
     }
   | { kind: "view"; schema: string; name: string; view: View }
-  | { kind: "function"; schema: string; name: string; arguments: string; definition: string };
+  | { kind: "function"; schema: string; name: string; arguments: string; definition: string }
+  | { kind: "createTable"; schema: string; table: Table }
+  | { kind: "createView"; schema: string; view: View }
+  /** A CREATE FUNCTION or CREATE PROCEDURE statement. */
+  | { kind: "createFunction"; schema: string; definition: string };
 
 export type AppError =
   | {

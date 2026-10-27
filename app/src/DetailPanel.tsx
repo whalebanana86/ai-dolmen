@@ -60,23 +60,14 @@ export function DetailPanel(props: Props) {
   }, [target]);
 
   return (
-    <div className="panel-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside
-        className="side-panel detail-panel"
-        role="dialog"
-        aria-label={target.name}
-        style={{ width: `min(${width}px, 100%)` }}
-      >
-        <Splitter
-          orientation="vertical"
-          size={width}
-          bounds={() => [420, window.innerWidth - 80]}
-          grows={-1}
-          onResize={onResize}
-          onReset={onResetWidth}
-          label={t.workspace.resizePanel}
-        />
-        <header className="side-panel-header">
+    <PanelShell
+      label={target.name}
+      width={width}
+      onResize={onResize}
+      onResetWidth={onResetWidth}
+      onClose={onClose}
+      header={
+        <>
           <span className="detail-kind">{found ? kindLabel(found, t) : ""}</span>
           <strong className="detail-name" title={`${target.schema}.${target.name}`}>
             {target.schema}.{target.name}
@@ -110,11 +101,9 @@ export function DetailPanel(props: Props) {
               {t.detail.edit}
             </button>
           )}
-          <button onClick={onClose} title={t.common.close}>
-            ✕
-          </button>
-        </header>
-
+        </>
+      }
+    >
         {!found ? (
           <div className="detail-body">
             <p className="muted">{t.detail.notFound}</p>
@@ -145,9 +134,134 @@ export function DetailPanel(props: Props) {
             {found.type === "function" && <FunctionDetail fn={found.fn} />}
           </div>
         )}
+    </PanelShell>
+  );
+}
+
+/** The right-hand panel: resizable from its left edge, closed with ✕ or a click beside it. */
+function PanelShell({
+  label,
+  width,
+  onResize,
+  onResetWidth,
+  onClose,
+  header,
+  children,
+}: {
+  label: string;
+  width: number;
+  onResize: (width: number) => void;
+  onResetWidth: () => void;
+  onClose: () => void;
+  header: ReactNode;
+  children: ReactNode;
+}) {
+  const t = useT();
+  return (
+    <div className="panel-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <aside className="side-panel detail-panel" role="dialog" aria-label={label} style={{ width: `min(${width}px, 100%)` }}>
+        <Splitter
+          orientation="vertical"
+          size={width}
+          bounds={() => [420, window.innerWidth - 80]}
+          grows={-1}
+          onResize={onResize}
+          onReset={onResetWidth}
+          label={t.workspace.resizePanel}
+        />
+        <header className="side-panel-header">
+          {header}
+          <button onClick={onClose} title={t.common.close}>
+            ✕
+          </button>
+        </header>
+        {children}
       </aside>
     </div>
   );
+}
+
+type NewObject = "table" | "view" | "function";
+
+/** Writes a new table, view or function, reviewed as SQL before it runs like an edit. */
+export function CreatePanel({
+  type,
+  schema,
+  onCreated,
+  onClose,
+  width,
+  onResize,
+  onResetWidth,
+  ...base
+}: {
+  sessionId: number;
+  introspection: Introspection;
+  type: NewObject;
+  schema: string;
+  /** After the object was created; null when its name isn't known, as for a function. */
+  onCreated: (created: ObjectRef | null) => void;
+  onInsert: (sql: string) => void;
+  onClose: () => void;
+  width: number;
+  onResize: (width: number) => void;
+  onResetWidth: () => void;
+}) {
+  const t = useT();
+  const editor = { ...base, onDone: onCreated, onCancel: onClose, creating: true };
+  return (
+    <PanelShell
+      label={t.detail.creating[type]}
+      width={width}
+      onResize={onResize}
+      onResetWidth={onResetWidth}
+      onClose={onClose}
+      header={
+        <>
+          <span className="detail-kind">{t.detail.creating[type]}</span>
+          <strong className="detail-name">{schema}</strong>
+          <span className="spacer" />
+        </>
+      }
+    >
+      {type === "table" && <TableEditor {...editor} schema={schema} table={NEW_TABLE} />}
+      {type === "view" && <ViewEditor {...editor} schema={schema} view={NEW_VIEW} />}
+      {type === "function" && <FunctionEditor {...editor} schema={schema} fn={newFunction(schema)} />}
+    </PanelShell>
+  );
+}
+
+/** A starting point: a numbered id that is the primary key. */
+const NEW_TABLE: Table = {
+  name: "",
+  kind: "table",
+  columns: [
+    {
+      name: "id",
+      dataType: "bigint",
+      nullable: false,
+      default: null,
+      identity: "always",
+      generated: null,
+      comment: null,
+    },
+  ],
+  constraints: [{ name: "", kind: "primaryKey", definition: "PRIMARY KEY (id)" }],
+  indexes: [],
+  partitionKey: null,
+  comment: null,
+};
+
+const NEW_VIEW: View = { name: "", materialized: false, columns: [], definition: "SELECT\n    \nFROM ", comment: null };
+
+function newFunction(schema: string): SqlFunction {
+  return {
+    name: "",
+    arguments: "",
+    kind: "function",
+    definition:
+      `CREATE OR REPLACE FUNCTION ${quoteIdent(schema)}.new_function(a integer)\n` +
+      " RETURNS integer\n LANGUAGE sql\nAS $function$\nSELECT a\n$function$",
+  };
 }
 
 function find({ database }: Introspection, target: ObjectRef): Found | null {
@@ -443,6 +557,17 @@ function schemaObject(found: Found): SchemaObject {
   }
 }
 
+interface EditorBase {
+  sessionId: number;
+  introspection: Introspection;
+  onInsert: (sql: string) => void;
+  /** After the change was applied, with the object's new name when it got one. */
+  onDone: (renamed: ObjectRef | null) => void;
+  onCancel: () => void;
+  /** Writing a new object instead of changing one. */
+  creating?: boolean;
+}
+
 interface EditorProps extends Props {
   found: Found;
   onDone: (renamed: ObjectRef | null) => void;
@@ -617,6 +742,8 @@ interface ColumnDraft {
   name: string;
   dataType: string;
   nullable: boolean;
+  /** Numbered by the database: GENERATED ... AS IDENTITY. */
+  identity: Column["identity"];
   default: string;
   comment: string;
   removed: boolean;
@@ -660,7 +787,8 @@ function TableEditor({
   onInsert,
   onDone,
   onCancel,
-}: EditorProps & { schema: string; table: Table }) {
+  creating = false,
+}: EditorBase & { schema: string; table: Table }) {
   const t = useT();
   const e = t.detail.editing;
   const [name, setName] = useState(table.name);
@@ -669,17 +797,18 @@ function TableEditor({
   const [columns, setColumns] = useState<ColumnDraft[]>(() =>
     table.columns.map((column, key) => ({
       key,
-      original: column,
+      original: creating ? null : column,
       name: column.name,
       dataType: column.dataType,
       nullable: column.nullable,
+      identity: column.identity,
       default: column.default ?? "",
       comment: column.comment ?? "",
       removed: false,
     })),
   );
   const [constraints, setConstraints] = useState<Draft<Constraint>[]>(() =>
-    table.constraints.map((item) => ({ item, added: false, removed: false })),
+    table.constraints.map((item) => ({ item, added: creating, removed: false })),
   );
   const [indexes, setIndexes] = useState<Draft<Index>[]>(() =>
     table.indexes.map((item) => ({ item, added: false, removed: false })),
@@ -700,6 +829,7 @@ function TableEditor({
         name: "",
         dataType: "text",
         nullable: true,
+        identity: null,
         default: "",
         comment: "",
         removed: false,
@@ -721,26 +851,33 @@ function TableEditor({
     const names = kept.map((c) => c.name.trim());
     const duplicate = names.find((n, i) => names.indexOf(n) !== i);
     if (duplicate) throw new Error(e.duplicateColumn(duplicate));
+    const tableName = name.trim();
+    const edited: Table = {
+      ...table,
+      name: tableName,
+      comment: comment.trim() || null,
+      columns: kept.map((c) => ({
+        name: c.name.trim(),
+        dataType: c.dataType.trim(),
+        // Identity columns are NOT NULL and take no default.
+        nullable: c.identity ? false : c.nullable,
+        default: c.original?.generated || c.identity ? null : c.default.trim() || null,
+        identity: c.identity,
+        generated: c.original?.generated ?? null,
+        comment: c.comment.trim() || null,
+      })),
+      constraints: constraints
+        .filter((d) => !d.removed)
+        // The starting primary key is named after the table once it has a name.
+        .map((d) => (d.item.name ? d.item : { ...d.item, name: `${tableName}_pkey` })),
+      indexes: indexes.filter((d) => !d.removed).map((d) => d.item),
+    };
+    if (creating) return { kind: "createTable", schema, table: edited };
     return {
       kind: "table",
       schema,
       name: table.name,
-      table: {
-        ...table,
-        name: name.trim(),
-        comment: comment.trim() || null,
-        columns: kept.map((c) => ({
-          name: c.name.trim(),
-          dataType: c.dataType.trim(),
-          nullable: c.nullable,
-          default: c.original?.generated ? null : c.default.trim() || null,
-          identity: c.original?.identity ?? null,
-          generated: c.original?.generated ?? null,
-          comment: c.comment.trim() || null,
-        })),
-        constraints: constraints.filter((d) => !d.removed).map((d) => d.item),
-        indexes: indexes.filter((d) => !d.removed).map((d) => d.item),
-      },
+      table: edited,
       renamedColumns: kept
         .filter((c) => c.original && c.original.name !== c.name.trim())
         .map((c) => [c.original!.name, c.name.trim()]),
@@ -760,7 +897,12 @@ function TableEditor({
       <div className="field-row">
         <label className="field">
           {e.name}
-          <input value={name} onChange={(ev) => setName(ev.target.value)} />
+          <input
+            value={name}
+            placeholder={t.detail.creating.tableName}
+            onChange={(ev) => setName(ev.target.value)}
+            autoFocus={creating}
+          />
         </label>
         <label className="field grow">
           {t.detail.comment}
@@ -780,6 +922,7 @@ function TableEditor({
               <th>{t.detail.column}</th>
               <th>{t.detail.type}</th>
               <th>{t.detail.notNull}</th>
+              <th title={e.identityTitle}>{e.identity}</th>
               <th>{t.detail.default}</th>
               <th>{t.detail.comment}</th>
               <th />
@@ -788,7 +931,7 @@ function TableEditor({
           <tbody>
             {columns.map((c) => {
               const generated = c.original?.generated ?? null;
-              const identity = c.original?.identity ?? null;
+              const identity = c.identity;
               return (
                 <tr key={c.key} className={c.removed ? "removed" : c.original ? undefined : "added"}>
                   <td>
@@ -818,9 +961,26 @@ function TableEditor({
                       aria-label={t.detail.notNull}
                     />
                   </td>
+                  <td className="center">
+                    <input
+                      type="checkbox"
+                      checked={identity !== null}
+                      onChange={(ev) =>
+                        setColumn(c.key, {
+                          identity: ev.target.checked ? (c.original?.identity ?? "always") : null,
+                          nullable: ev.target.checked ? false : c.nullable,
+                        })
+                      }
+                      disabled={c.removed || generated !== null}
+                      title={e.identityTitle}
+                      aria-label={e.identity}
+                    />
+                  </td>
                   <td>
                     {generated || identity ? (
-                      <span className="muted mono">{columnDefault(c.original!, t)}</span>
+                      <span className="muted mono">
+                        {columnDefault({ ...(c.original ?? NEW_TABLE.columns[0]), identity, generated }, t)}
+                      </span>
                     ) : (
                       <input
                         value={c.default}
@@ -865,7 +1025,7 @@ function TableEditor({
       <Section title={t.detail.constraints}>
         <DraftList
           drafts={constraints}
-          label={(c) => c.name}
+          label={(c) => c.name || `${name.trim() || table.name || "…"}_pkey`}
           detail={(c) => c.definition}
           onToggle={(i) => setConstraints((current) => toggle(current, i))}
         />
@@ -1143,23 +1303,43 @@ function ViewEditor({
   onInsert,
   onDone,
   onCancel,
-}: EditorProps & { schema: string; view: View }) {
+  creating = false,
+}: EditorBase & { schema: string; view: View }) {
   const t = useT();
+  const [name, setName] = useState(view.name);
+  const [materialized, setMaterialized] = useState(view.materialized);
   const [definition, setDefinition] = useState(view.definition.trim());
   const [comment, setComment] = useState(view.comment ?? "");
   return (
     <EditFlow
       sessionId={sessionId}
-      build={() => ({
-        kind: "view",
-        schema,
-        name: view.name,
-        view: { ...view, definition, comment: comment.trim() || null },
-      })}
+      build={() => {
+        const edited = { ...view, name: name.trim(), materialized, definition, comment: comment.trim() || null };
+        if (!creating) return { kind: "view", schema, name: view.name, view: edited };
+        if (!edited.name) throw new Error(t.detail.editing.emptyName);
+        return { kind: "createView", schema, view: edited };
+      }}
       onInsert={onInsert}
       onCancel={onCancel}
-      onApplied={() => onDone(null)}
+      onApplied={() => onDone(creating ? { type: "view", schema, name: name.trim() } : null)}
     >
+      {creating && (
+        <div className="field-row">
+          <label className="field grow">
+            {t.detail.editing.name}
+            <input
+              value={name}
+              placeholder={t.detail.creating.viewName}
+              onChange={(ev) => setName(ev.target.value)}
+              autoFocus
+            />
+          </label>
+          <label className="checkbox">
+            <input type="checkbox" checked={materialized} onChange={(ev) => setMaterialized(ev.target.checked)} />
+            {t.detail.creating.materialized}
+          </label>
+        </div>
+      )}
       <label className="field">
         {t.detail.comment}
         <input value={comment} onChange={(ev) => setComment(ev.target.value)} />
@@ -1185,13 +1365,18 @@ function FunctionEditor({
   onInsert,
   onDone,
   onCancel,
-}: EditorProps & { schema: string; fn: SqlFunction }) {
+  creating = false,
+}: EditorBase & { schema: string; fn: SqlFunction }) {
   const t = useT();
   const [definition, setDefinition] = useState(fn.definition.trim());
   return (
     <EditFlow
       sessionId={sessionId}
-      build={() => ({ kind: "function", schema, name: fn.name, arguments: fn.arguments, definition })}
+      build={() =>
+        creating
+          ? { kind: "createFunction", schema, definition }
+          : { kind: "function", schema, name: fn.name, arguments: fn.arguments, definition }
+      }
       onInsert={onInsert}
       onCancel={onCancel}
       onApplied={() => onDone(null)}

@@ -68,7 +68,8 @@ it references and the ones that reference it, with their ON DELETE and ON
 UPDATE rules. **ERD** draws a schema's tables and foreign keys as a diagram,
 or one table with its neighbors.
 
-**Edit** in the details changes a table (name, columns, constraints, indexes,
+Right-click a schema, a group or an object for **New table…**, **New view…** or
+**New function…**, written and reviewed the same way. **Edit** in the details changes a table (name, columns, constraints, indexes,
 comments), a view's query or a function's definition. Dolmen shows the
 statements first; they run in one transaction, steps that can lose data need
 your consent, and they can go into the editor instead.

@@ -371,3 +371,109 @@ async fn applies_edits_from_the_detail_view() {
     );
     run(&session, "DROP SCHEMA edit_test CASCADE").await;
 }
+
+#[tokio::test]
+async fn creates_tables_views_and_functions_from_the_detail_view() {
+    use dolmen_core::postgres::edit::{self, Edit};
+    use dolmen_core::schema::{
+        Column, Constraint, ConstraintKind, Identity, Table, TableKind, View,
+    };
+
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let _exclusive = exclusive().await;
+    run(
+        &session,
+        "DROP SCHEMA IF EXISTS create_test CASCADE;
+         CREATE SCHEMA create_test;
+         CREATE TABLE create_test.authors (id int PRIMARY KEY, name text);",
+    )
+    .await;
+    let column = |name: &str, data_type: &str, nullable: bool| Column {
+        name: name.into(),
+        data_type: data_type.into(),
+        nullable,
+        default: None,
+        identity: None,
+        generated: None,
+        comment: None,
+    };
+    let posts = Table {
+        name: "posts".into(),
+        kind: TableKind::Table,
+        columns: vec![
+            Column {
+                identity: Some(Identity::Always),
+                ..column("id", "bigint", false)
+            },
+            column("author_id", "integer", false),
+            Column {
+                comment: Some("what it says".into()),
+                ..column("title", "text", true)
+            },
+        ],
+        constraints: vec![
+            Constraint {
+                name: "posts_pkey".into(),
+                kind: ConstraintKind::PrimaryKey,
+                definition: "PRIMARY KEY (id)".into(),
+            },
+            Constraint {
+                name: "posts_author_id_fkey".into(),
+                kind: ConstraintKind::ForeignKey,
+                definition:
+                    "FOREIGN KEY (author_id) REFERENCES create_test.authors(id) ON DELETE CASCADE"
+                        .into(),
+            },
+        ],
+        indexes: vec![],
+        partition_key: None,
+        comment: Some("blog posts".into()),
+    };
+    let create = |edit: Edit| {
+        let session = &session;
+        async move {
+            let plan = edit::plan(&session.introspect().await.unwrap(), &edit).unwrap();
+            apply(session, &plan).await;
+        }
+    };
+    create(Edit::CreateTable {
+        schema: "create_test".into(),
+        table: posts.clone(),
+    })
+    .await;
+    create(Edit::CreateView {
+        schema: "create_test".into(),
+        view: View {
+            name: "titles".into(),
+            materialized: false,
+            columns: vec![],
+            definition: "SELECT title FROM create_test.posts".into(),
+            comment: None,
+        },
+    })
+    .await;
+    create(Edit::CreateFunction {
+        schema: "create_test".into(),
+        definition: "CREATE FUNCTION create_test.post_count() RETURNS bigint LANGUAGE sql AS 'SELECT count(*) FROM create_test.posts'".into(),
+    })
+    .await;
+
+    // The model reads back the table as it was written.
+    let mut database = session.introspect().await.unwrap();
+    database.schemas.retain(|s| s.name == "create_test");
+    let schema = &database.schemas[0];
+    let created = schema.tables.iter().find(|t| t.name == "posts").unwrap();
+    let mut expected = posts;
+    // Constraints read back in name order.
+    expected.constraints.sort_by(|a, b| a.name.cmp(&b.name));
+    assert_eq!(created, &expected);
+    assert_eq!(schema.views[0].name, "titles");
+    assert_eq!(schema.functions[0].name, "post_count");
+    let keys = session.foreign_keys().await.unwrap();
+    assert!(
+        keys.iter()
+            .any(|k| k.table == "posts" && k.on_delete == "CASCADE")
+    );
+    run(&session, "DROP SCHEMA create_test CASCADE").await;
+}

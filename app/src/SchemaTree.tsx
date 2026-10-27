@@ -16,6 +16,14 @@ import type { Messages } from "./i18n/en";
 import { useT } from "./settings";
 import { quoteIdent } from "./sqlIdent";
 
+type NewObject = "table" | "view" | "function";
+
+/** The menu item that starts a new object of the kind. */
+function createItem(schema: string, type: NewObject, actions: TreeActions, t: Messages): MenuItem {
+  const label = { table: t.tree.menu.newTable, view: t.tree.menu.newView, function: t.tree.menu.newFunction }[type];
+  return { label, onSelect: () => actions.create(schema, type) };
+}
+
 /** What the tree's menus can do in the workspace. */
 export interface TreeActions {
   /** Adds SQL at the end of the editor, and runs it when `run` is set. */
@@ -26,6 +34,8 @@ export interface TreeActions {
   showDetail: (target: ObjectRef) => void;
   /** Opens the ERD of a schema, or of one table and its neighbors. */
   showErd: (schema: string, table: string | null) => void;
+  /** Starts writing a new table, view or function in the schema. */
+  create: (schema: string, type: NewObject) => void;
   refresh: () => void;
 }
 
@@ -102,6 +112,10 @@ export function SchemaTree({ introspection, loading, actions, width }: Props) {
                   openMenu(e, [
                     { label: t.tree.menu.showErd, onSelect: () => actions.showErd(schema.name, null) },
                     { separator: true },
+                    createItem(schema.name, "table", actions, t),
+                    createItem(schema.name, "view", actions, t),
+                    createItem(schema.name, "function", actions, t),
+                    { separator: true },
                     copyItem(t.tree.menu.copyName, schema.name),
                     { label: t.tree.menu.refresh, onSelect: actions.refresh },
                     { separator: true },
@@ -147,7 +161,13 @@ interface ChildrenProps {
 
 function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, sql }: ChildrenProps) {
   const t = useT();
-  const group = (name: string, count: number, children: () => ReactNode, openByDefault = false) => {
+  const group = (
+    name: string,
+    count: number,
+    children: () => ReactNode,
+    openByDefault = false,
+    creates: NewObject | null = null,
+  ) => {
     if (count === 0) return null;
     const key = `group:${schema.name}:${name}`;
     const open = forceOpen || isOpen(key, openByDefault);
@@ -157,7 +177,12 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
           depth={1}
           open={open}
           onToggle={() => toggle(key)}
-          onContextMenu={(e) => openMenu(e, [{ label: t.tree.menu.refresh, onSelect: actions.refresh }])}
+          onContextMenu={(e) =>
+            openMenu(e, [
+              ...(creates ? [createItem(schema.name, creates, actions, t), { separator: true as const }] : []),
+              { label: t.tree.menu.refresh, onSelect: actions.refresh },
+            ])
+          }
           label={name}
           detail={String(count)}
         />
@@ -182,6 +207,7 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
             />
           )),
         true,
+        "table",
       )}
       {group(t.tree.groups.views, schema.views.length, () =>
         schema.views.map((view) => (
@@ -192,6 +218,8 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
             {...relationProps}
           />
         )),
+        false,
+        "view",
       )}
       {group(t.tree.groups.functions, schema.functions.length, () =>
         schema.functions.map((fn) => (
@@ -205,6 +233,8 @@ function SchemaChildren({ schema, forceOpen, isOpen, toggle, openMenu, actions, 
             onContextMenu={(e) => openMenu(e, functionMenu(schema.name, fn, actions, sql, t))}
           />
         )),
+        false,
+        "function",
       )}
       {group(t.tree.groups.sequences, schema.sequences.length, () =>
         schema.sequences.map((sequence) => {
@@ -371,6 +401,7 @@ function relationMenu(
     ...(isTable
       ? [{ label: t.tree.menu.showInErd, onSelect: () => actions.showErd(schema, relation.name) }]
       : []),
+    createItem(schema, isTable ? "table" : "view", actions, t),
     { separator: true },
     { label: t.tree.menu.selectRows, onSelect: () => actions.insert(`SELECT * FROM ${name} LIMIT 1000;`, true) },
     { label: t.tree.menu.countRows, onSelect: () => actions.insert(`SELECT count(*) FROM ${name};`, true) },
@@ -424,6 +455,7 @@ function functionMenu(schema: string, fn: SqlFunction, actions: TreeActions, sql
       label: t.tree.menu.showDetail,
       onSelect: () => actions.showDetail({ type: "function", schema, name: fn.name, arguments: fn.arguments }),
     },
+    createItem(schema, "function", actions, t),
     { separator: true },
     copyItem(t.tree.menu.copyName, fn.name),
     copyItem(t.tree.menu.copySignature, signature),

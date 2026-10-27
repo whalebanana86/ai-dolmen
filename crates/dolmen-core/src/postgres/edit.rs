@@ -1,4 +1,5 @@
-//! Changes to one table, view or function, as made in the app's detail view.
+//! Changes to one table, view or function, and new ones, as made in the app's
+//! detail view.
 //!
 //! An edit replaces the object in a copy of the database's model, and the
 //! migration planner works out the statements, so edits get the same ordering,
@@ -42,6 +43,12 @@ pub enum Edit {
         arguments: String,
         definition: String,
     },
+    /// A new table in `schema`.
+    CreateTable { schema: String, table: Table },
+    /// A new view in `schema`.
+    CreateView { schema: String, view: View },
+    /// A new function or procedure, from its `CREATE FUNCTION` or `CREATE PROCEDURE` statement.
+    CreateFunction { schema: String, definition: String },
 }
 
 /// The steps that make the object in `current` match the edit.
@@ -109,6 +116,45 @@ pub fn plan(current: &Database, edit: &Edit) -> Result<Plan, Error> {
                 .trim_end()
                 .to_owned();
         }
+        Edit::CreateTable { schema, table } => {
+            let tables = schema_mut(&mut target, schema)?;
+            check_new_relation(tables, &table.name)?;
+            tables.tables.push(table.clone());
+        }
+        Edit::CreateView { schema, view } => {
+            check_new_relation(schema_mut(&mut target, schema)?, &view.name)?;
+            if view.definition.trim().is_empty() {
+                return Err(invalid("the view needs a query"));
+            }
+            return Ok(steps_plan([ddl::create_view(schema, view)]));
+        }
+        Edit::CreateFunction { schema, definition } => {
+            schema_mut(&mut target, schema)?;
+            let statement = definition.trim().trim_end_matches(';').trim_end();
+            let words: Vec<String> = statement
+                .split_whitespace()
+                .take(4)
+                .map(str::to_uppercase)
+                .collect();
+            let creates = match words.as_slice() {
+                [create, kind, ..] if create == "CREATE" => {
+                    kind == "FUNCTION"
+                        || kind == "PROCEDURE"
+                        || (kind == "OR"
+                            && words.get(2).is_some_and(|w| w == "REPLACE")
+                            && words
+                                .get(3)
+                                .is_some_and(|w| w == "FUNCTION" || w == "PROCEDURE"))
+                }
+                _ => false,
+            };
+            if !creates {
+                return Err(invalid(
+                    "write a CREATE FUNCTION or CREATE PROCEDURE statement",
+                ));
+            }
+            return Ok(steps_plan([format!("{statement};")]));
+        }
     }
     Ok(migrate::plan_keeping_views(current, &target, &renames))
 }
@@ -140,6 +186,11 @@ fn view_plan(schema: &str, current: &View, target: &View) -> Plan {
     } else if current.comment != target.comment {
         steps.push(ddl::comment_on(object, &name, target.comment.as_deref()));
     }
+    steps_plan(steps)
+}
+
+/// A plan of statements that lose no data, run in order.
+fn steps_plan(steps: impl IntoIterator<Item = String>) -> Plan {
     Plan {
         steps: steps
             .into_iter()
@@ -150,6 +201,26 @@ fn view_plan(schema: &str, current: &View, target: &View) -> Plan {
             .collect(),
         blockers: Vec::new(),
         rename_candidates: Vec::new(),
+    }
+}
+
+/// Tables, views and sequences share their schema's names, so a new one needs a free name.
+fn check_new_relation(schema: &Schema, name: &str) -> Result<(), Error> {
+    if name.trim().is_empty() {
+        return Err(invalid("a name is needed"));
+    }
+    let taken = schema.tables.iter().any(|t| t.name == name)
+        || schema.views.iter().any(|v| v.name == name)
+        || schema.sequences.iter().any(|s| s.name == name);
+    if taken {
+        return Err(invalid(&format!("{}.{name} already exists", schema.name)));
+    }
+    Ok(())
+}
+
+fn invalid(message: &str) -> Error {
+    Error::Storage {
+        message: message.to_owned(),
     }
 }
 
@@ -270,6 +341,89 @@ mod tests {
         .unwrap();
         assert_eq!(sql(&plan), ["ALTER TABLE app.users DROP COLUMN name;"]);
         assert!(plan.is_destructive());
+    }
+
+    #[test]
+    fn creates_tables_with_their_keys_after_them() {
+        let mut table = database().schemas[0].tables[0].clone();
+        table.name = "posts".into();
+        table.constraints = vec![
+            Constraint {
+                name: "posts_pkey".into(),
+                kind: ConstraintKind::PrimaryKey,
+                definition: "PRIMARY KEY (id)".into(),
+            },
+            Constraint {
+                name: "posts_id_fkey".into(),
+                kind: ConstraintKind::ForeignKey,
+                definition: "FOREIGN KEY (id) REFERENCES app.users(id)".into(),
+            },
+        ];
+        let plan = plan(
+            &database(),
+            &Edit::CreateTable {
+                schema: "app".into(),
+                table: table.clone(),
+            },
+        )
+        .unwrap();
+        let steps = sql(&plan);
+        assert!(steps[0].starts_with("CREATE TABLE app.posts"), "{steps:?}");
+        assert_eq!(
+            steps.last(),
+            Some(
+                &"ALTER TABLE app.posts ADD CONSTRAINT posts_id_fkey FOREIGN KEY (id) REFERENCES app.users(id);"
+            )
+        );
+        assert!(!plan.is_destructive());
+
+        table.name = "users".into();
+        let taken = Edit::CreateTable {
+            schema: "app".into(),
+            table,
+        };
+        assert!(plan_err(&taken).contains("already exists"));
+    }
+
+    #[test]
+    fn creates_views_and_functions_from_their_statements() {
+        let view = View {
+            name: "names".into(),
+            materialized: false,
+            columns: vec![],
+            definition: "SELECT name FROM app.users".into(),
+            comment: Some("just names".into()),
+        };
+        let edit = Edit::CreateView {
+            schema: "app".into(),
+            view,
+        };
+        assert_eq!(
+            sql(&plan(&database(), &edit).unwrap()),
+            [
+                "CREATE VIEW app.names AS\nSELECT name FROM app.users;\n\nCOMMENT ON VIEW app.names IS 'just names';"
+            ]
+        );
+
+        let function = |definition: &str| Edit::CreateFunction {
+            schema: "app".into(),
+            definition: definition.into(),
+        };
+        assert_eq!(
+            sql(&plan(
+                &database(),
+                &function(
+                    "create or replace function app.one() returns int language sql as 'select 1';"
+                )
+            )
+            .unwrap()),
+            ["create or replace function app.one() returns int language sql as 'select 1';"]
+        );
+        assert!(plan_err(&function("DROP TABLE app.users")).contains("CREATE FUNCTION"));
+    }
+
+    fn plan_err(edit: &Edit) -> String {
+        plan(&database(), edit).unwrap_err().to_string()
     }
 
     #[test]
