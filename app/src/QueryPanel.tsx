@@ -25,7 +25,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { HistoryPanel } from "./HistoryPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
-import { ResultView } from "./ResultView";
+import { ResultView, StatementLine } from "./ResultView";
 import { SchemaTree } from "./SchemaTree";
 import { SettingsButton, SettingsDialog } from "./SettingsDialog";
 import { SnapshotPanel } from "./SnapshotPanel";
@@ -47,7 +47,7 @@ interface Outcome {
   /** Distinguishes runs, so result grids start fresh instead of keeping old column widths. */
   runId: number;
   /** Results of the statements that succeeded, in order. */
-  results: StatementResult[];
+  results: { result: StatementResult; statement: FixTarget }[];
   /** The error that stopped the run, if any, and the statement that failed. */
   failure: { error: unknown; location: Location | null; statement: FixTarget } | null;
   statementCount: number;
@@ -248,13 +248,15 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     setRunning(true);
     updateLayout({ resultsVisible: true });
     const started = performance.now();
-    const results: StatementResult[] = [];
+    const results: Outcome["results"] = [];
     let failure: Outcome["failure"] = null;
     // One statement at a time, so a failure doesn't roll back the ones before it.
     for (const range of ranges) {
       const statement = sql.slice(range.start, range.end);
       try {
-        results.push(...(await pg.execute(session.id, statement)));
+        for (const result of await pg.execute(session.id, statement)) {
+          results.push({ result, statement: { statement, start: range.start, end: range.end } });
+        }
       } catch (error) {
         failure = {
           error,
@@ -274,7 +276,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     });
     setRunning(false);
     // DDL such as CREATE TABLE returns no rows; reload the tree, completion and snapshot status.
-    if (results.some((result) => result.kind === "command")) {
+    if (results.some(({ result }) => result.kind === "command")) {
       refreshSchema();
       refreshSnapshot();
     }
@@ -322,6 +324,22 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   function fixWithAi(failure: NonNullable<Outcome["failure"]>) {
     setAiPrompting(false);
     ask({ kind: "fix", sql: failure.statement.statement, error: describeError(failure.error, t) }, failure.statement);
+  }
+
+  /** Selects a statement that ran, where it is in the editor now. */
+  function revealStatement(target: FixTarget) {
+    const view = viewRef.current;
+    if (!view) return;
+    let start = target.start;
+    if (view.state.sliceDoc(target.start, target.end) !== target.statement) {
+      start = view.state.doc.toString().indexOf(target.statement);
+      if (start < 0) return;
+    }
+    view.dispatch({
+      selection: { anchor: start, head: start + target.statement.length },
+      scrollIntoView: true,
+    });
+    view.focus();
   }
 
   /** Puts a fix where the failed statement was, if the editor still has it there. */
@@ -502,11 +520,21 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                       Math.round(outcome.elapsedMs),
                     )}
                   </p>
-                  {outcome.results.map((result, index) => (
-                    <ResultView key={`${outcome.runId}-${index}`} index={index} result={result} />
+                  {outcome.results.map(({ result, statement }, index) => (
+                    <ResultView
+                      key={`${outcome.runId}-${index}`}
+                      index={index}
+                      result={result}
+                      sql={statement.statement}
+                      onReveal={() => revealStatement(statement)}
+                    />
                   ))}
                   {outcome.failure && (
-                    <ErrorView {...outcome.failure} onFix={() => fixWithAi(outcome.failure!)} />
+                    <ErrorView
+                      {...outcome.failure}
+                      onFix={() => fixWithAi(outcome.failure!)}
+                      onReveal={() => revealStatement(outcome.failure!.statement)}
+                    />
                   )}
                 </>
               )}
@@ -671,17 +699,22 @@ async function statementsToRun(sql: string, selectionStart: number, selectionEnd
 function ErrorView({
   error,
   location,
+  statement,
   onFix,
+  onReveal,
 }: {
   error: unknown;
   location: Location | null;
+  statement: FixTarget;
   onFix: () => void;
+  onReveal: () => void;
 }) {
   const t = useT();
   const db = isAppError(error) && error.kind === "database" ? error : null;
 
   return (
     <div className="error-box">
+      <StatementLine sql={statement.statement} onReveal={onReveal} />
       <p>
         <strong>{errorMessage(error, t)}</strong>
       </p>

@@ -55,3 +55,40 @@ export function splitNames(list: string): string[] {
   names.push(current.trim());
   return names.filter(Boolean);
 }
+
+const IDENT = String.raw`(?:"(?:[^"]|"")+"|[\p{L}_][\p{L}\p{N}_$]*)`;
+const NAME = String.raw`${IDENT}(?:\s*\.\s*${IDENT})?`;
+const TARGETS = [
+  String.raw`^(?:INSERT|MERGE)\s+INTO\s+(${NAME})`,
+  String.raw`^UPDATE\s+(?:ONLY\s+)?(${NAME})`,
+  String.raw`^DELETE\s+FROM\s+(?:ONLY\s+)?(${NAME})`,
+  String.raw`^TRUNCATE\s+(?:TABLE\s+)?(?:ONLY\s+)?(${NAME})`,
+  String.raw`^COPY\s+(${NAME})`,
+  // An index is about the table it is on.
+  String.raw`^CREATE\s+(?:UNIQUE\s+)?INDEX\b[\s\S]*?\bON\s+(?:ONLY\s+)?(${NAME})`,
+  String.raw`^(?:CREATE|ALTER|DROP)\s+(?:OR\s+REPLACE\s+)?(?:(?:UNLOGGED|TEMP|TEMPORARY|UNIQUE)\s+)*` +
+    String.raw`(?:TABLE|VIEW|MATERIALIZED\s+VIEW|INDEX(?:\s+CONCURRENTLY)?|SEQUENCE|FUNCTION|PROCEDURE|TYPE|SCHEMA)\s+` +
+    String.raw`(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(${NAME})`,
+].map((pattern) => new RegExp(pattern, "iu"));
+const FROM = new RegExp(String.raw`\bFROM\s+(?:ONLY\s+)?(${NAME})(\s*\()?`, "giu");
+
+/**
+ * The table a statement mainly works on, as written in it: the target of an
+ * INSERT, UPDATE, DELETE or DDL statement, else the first table after FROM.
+ * Null when there is none, as in `SELECT version()`.
+ */
+export function statementTable(sql: string): string | null {
+  // Leading comments aside, and string literals blanked so their words don't count.
+  const text = sql
+    .replace(/^(?:\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*/, "")
+    .replace(/'(?:[^']|'')*'/g, "''");
+  for (const pattern of TARGETS) {
+    const match = pattern.exec(text);
+    if (match) return match[1];
+  }
+  for (const match of text.matchAll(FROM)) {
+    // FROM generate_series(...) names a function, not a table.
+    if (!match[2]) return match[1];
+  }
+  return null;
+}

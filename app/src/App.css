@@ -451,8 +451,37 @@ button.danger {
 }
 
 .result-title {
-  margin: 0 0 6px;
+  margin: 0 0 2px;
   color: var(--muted);
+}
+
+.result-table {
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+/* The statement behind a result, on one line. */
+.result-sql {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 0;
+  overflow: hidden;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.result-sql:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 
 .grid {

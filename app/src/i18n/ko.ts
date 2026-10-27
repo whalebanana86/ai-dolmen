@@ -124,6 +124,7 @@ export const ko: Messages = {
 
   results: {
     statement: (n) => `문장 ${n}`,
+    revealTitle: "누르면 편집기에서 이 문장을 선택합니다",
     rowsAffected: (n) => `${count(n, "행")} 변경됨`,
     completed: "완료",
     rows: (n) => count(n, "행"),

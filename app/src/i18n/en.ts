@@ -129,6 +129,7 @@ export const en = {
 
   results: {
     statement: (n: number) => `Statement ${n}`,
+    revealTitle: "Click to select it in the editor",
     rowsAffected: (n: number) => plural(n, "row affected", "rows affected"),
     completed: "completed",
     rows: (n: number) => plural(n, "row", "rows"),
