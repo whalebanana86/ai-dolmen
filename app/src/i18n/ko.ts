@@ -17,7 +17,7 @@ export const ko: Messages = {
   errors: {
     closed: "연결이 끊겼습니다.",
     refused: {
-      notLocal: "스냅샷으로는 로컬 데이터베이스(localhost, 루프백 주소, 유닉스 소켓)만 바꿀 수 있습니다.",
+      notAllowed: "이 연결은 스냅샷으로 데이터베이스를 바꾸도록 허용되지 않았습니다. 개발용 DB라면 연결 설정에서 허용하세요.",
       planChanged: "계획을 검토한 뒤 데이터베이스나 스냅샷이 바뀌었습니다. 다시 검토해 주세요.",
       planBlocked: "Dolmen이 할 수 없는 변경이 계획에 있습니다. 계획을 확인해 주세요.",
       destructiveNotAllowed:
@@ -88,6 +88,14 @@ export const ko: Messages = {
     sslModes: { disable: "사용 안 함", prefer: "가능하면 사용", require: "필수", "verify-full": "인증서까지 확인" },
     savePassword: "비밀번호를 OS 키체인에 저장",
     recordHistory: "실행한 쿼리 히스토리 기록",
+    allowSnapshotApply: "스냅샷으로 이 데이터베이스 변경 허용",
+    allowSnapshotApplyTitle:
+      "개발용 DB에만 켜세요. 다른 컴퓨터의 서버는 기본으로 꺼져 있고, SSH 터널이나 프록시처럼 localhost로 연결한 운영 DB도 꺼 두세요.",
+    sslWeak: {
+      disable: "TLS 없이 비밀번호와 데이터가 그대로 네트워크를 지나갑니다.",
+      prefer: "Prefer는 공격자가 TLS를 막으면 암호화 없이 연결됩니다. 다른 컴퓨터의 서버에는 Verify full을 쓰세요.",
+      require: "Require는 암호화는 하지만 인증서를 확인하지 않아 중간의 공격자가 내용을 볼 수 있습니다. Verify full을 쓰세요.",
+    },
     recordHistoryTitle: "운영 DB처럼 SQL을 이 컴퓨터에 남기면 안 되는 연결은 끄세요",
     confirmDelete: "한 번 더 누르면 삭제",
     connect: "연결",
@@ -394,8 +402,9 @@ export const ko: Messages = {
 
   apply: {
     title: (label) => `데이터베이스를 ${label}에 맞추기`,
-    notLocal:
-      "스냅샷으로는 로컬 데이터베이스(localhost, 루프백 주소, 유닉스 소켓)만 바꿀 수 있습니다. 이 연결의 서버는 다른 곳에 있어서 계획은 검토용으로만 보여 줍니다.",
+    notAllowed:
+      "이 연결은 스냅샷으로 데이터베이스를 바꾸도록 허용되지 않아 계획은 검토용으로만 보여 줍니다. 개발용 DB라면 연결 설정에서 허용하세요.",
+    target: (label, address) => `바뀌는 곳: ${label} (${address})`,
     planning: "계획을 세우는 중…",
     blockersTitle: "Dolmen이 할 수 없는 변경이라 이 계획은 적용할 수 없습니다:",
     blockers: {

@@ -66,8 +66,8 @@ pub enum AiFailure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Refusal {
-    /// Only databases on this machine take snapshot plans.
-    NotLocal,
+    /// The connection doesn't allow snapshot plans to change its database.
+    NotAllowed,
     /// The database or snapshot changed since the plan was reviewed.
     PlanChanged,
     /// The plan has changes Dolmen can't make.

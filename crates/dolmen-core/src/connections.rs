@@ -45,6 +45,11 @@ pub struct SavedConnection {
     /// Turned off for databases whose SQL shouldn't be kept, such as production.
     #[serde(default = "record_by_default")]
     pub record_history: bool,
+    /// Whether snapshot plans may change this database. Unset, only a server
+    /// on this machine allows it, which a tunnel or proxy to production also
+    /// looks like, so the user can say so explicitly either way.
+    #[serde(default)]
+    pub allow_snapshot_apply: Option<bool>,
 }
 
 fn record_by_default() -> bool {

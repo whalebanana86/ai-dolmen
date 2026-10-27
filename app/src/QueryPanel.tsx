@@ -613,6 +613,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       {snapshotOpen && (
         <SnapshotPanel
           sessionId={session.id}
+          target={session}
           database={session.database}
           dir={snapshotDir}
           remote={snapshotRemote}

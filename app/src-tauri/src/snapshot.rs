@@ -210,8 +210,8 @@ pub async fn snapshot_compare(
 #[serde(rename_all = "camelCase")]
 pub struct ApplyPreview {
     plan: Plan,
-    /// Only local databases take snapshot plans.
-    local: bool,
+    /// Whether the connection lets snapshot plans change its database.
+    allowed: bool,
 }
 
 /// The plan that makes the database match the snapshot at `rev`, or the files
@@ -228,7 +228,7 @@ pub async fn snapshot_plan(
     let target = target_model(Path::new(&dir), rev.as_deref())?;
     Ok(ApplyPreview {
         plan: migrate::plan(&session.introspect().await?, &target, &renames),
-        local: session.is_local(),
+        allowed: sessions.apply_allowed(session_id),
     })
 }
 
@@ -249,10 +249,10 @@ pub async fn snapshot_apply(
     history: State<'_, HistoryStore>,
 ) -> Result<(), Error> {
     let session = sessions.get(session_id)?;
-    if !session.is_local() {
+    if !sessions.apply_allowed(session_id) {
         return Err(refused(
-            Refusal::NotLocal,
-            "Only local databases (localhost, a loopback address or a Unix socket) can be changed from a snapshot.",
+            Refusal::NotAllowed,
+            "This connection doesn't allow snapshots to change its database; allow it in the connection's settings.",
         ));
     }
     let target = target_model(Path::new(&dir), rev.as_deref())?;

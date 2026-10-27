@@ -22,6 +22,8 @@ export interface SessionInfo {
   savedId: string | null;
   /** The saved connection's name, or user@host:port/database. */
   label: string;
+  /** user@host:port/database, to say which server something will change. */
+  address: string;
 }
 
 export type StatementResult =
@@ -178,7 +180,7 @@ export type AppError =
 
 /** Why the backend refused an action; the UI words each in the user's language. */
 export type Refusal =
-  | "notLocal"
+  | "notAllowed"
   | "planChanged"
   | "planBlocked"
   | "destructiveNotAllowed"
@@ -260,6 +262,8 @@ export interface SavedConnection {
   snapshotRemote: SnapshotRemote | null;
   /** Whether statements run on this connection go into the query history. */
   recordHistory: boolean;
+  /** Whether snapshot plans may change this database; unset, only a server on this machine. */
+  allowSnapshotApply: boolean | null;
 }
 
 export interface SnapshotRemote {
@@ -346,8 +350,8 @@ export interface Plan {
 
 export interface ApplyPreview {
   plan: Plan;
-  /** Only local databases take snapshot plans. */
-  local: boolean;
+  /** Whether the connection lets snapshot plans change its database. */
+  allowed: boolean;
 }
 
 export const snapshots = {
@@ -398,6 +402,14 @@ export const snapshots = {
   createStatement: (schema: string, object: SchemaObject) =>
     invoke<string>("ddl_create_statement", { schema, object }),
 };
+
+/** Whether a host is this machine, as the backend judges it: localhost, a loopback address or a socket. */
+export function isLocalHost(host: string) {
+  const name = host.trim().toLowerCase();
+  if (name === "localhost" || name.startsWith("/")) return true;
+  const address = name.replace(/^\[|\]$/g, "");
+  return address === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(address);
+}
 
 export const objects = {
   /** The statements that make the object match `edit`, to review. */

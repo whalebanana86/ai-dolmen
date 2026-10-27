@@ -47,6 +47,7 @@ fn local() -> SavedConnection {
         snapshot_dir: None,
         snapshot_remote: None,
         record_history: true,
+        allow_snapshot_apply: None,
     }
 }
 

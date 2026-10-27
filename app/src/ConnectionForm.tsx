@@ -7,6 +7,7 @@ import {
   appVersion,
   connections,
   errorMessage,
+  isLocalHost,
   pg,
 } from "./api";
 import { SettingsButton, SettingsDialog } from "./SettingsDialog";
@@ -29,6 +30,7 @@ const NEW_CONNECTION: Draft = {
   snapshotDir: null,
   snapshotRemote: null,
   recordHistory: true,
+  allowSnapshotApply: null,
 };
 
 function toDraft(connection: SavedConnection): Draft {
@@ -50,6 +52,7 @@ export function ConnectionForm({ onConnected }: Props) {
   const [version, setVersion] = useState("");
   const [saved, setSaved] = useState<SavedConnection[]>([]);
   const [draft, setDraft] = useState<Draft>(NEW_CONNECTION);
+  const [sslChosen, setSslChosen] = useState(false);
   const [password, setPassword] = useState("");
   const [savePassword, setSavePassword] = useState(true);
   const [busy, setBusy] = useState<"connect" | "save" | "delete" | null>(null);
@@ -69,8 +72,21 @@ export function ConnectionForm({ onConnected }: Props) {
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
+  // A new connection checks the server's certificate unless the server is on
+  // this machine, until the user picks an SSL mode.
+  function changeHost(host: string) {
+    setDraft((current) => ({
+      ...current,
+      host,
+      sslMode: current.id || sslChosen ? current.sslMode : isLocalHost(host) ? "prefer" : "verify-full",
+    }));
+  }
+  const weakSsl =
+    !isLocalHost(draft.host) && draft.sslMode !== "verify-full" ? t.connect.sslWeak[draft.sslMode] : null;
+
   function select(next: Draft) {
     setDraft(next);
+    setSslChosen(false);
     setPassword("");
     setSavePassword(next.id === "" || next.hasPassword);
     setConfirmingDelete(false);
@@ -191,7 +207,7 @@ export function ConnectionForm({ onConnected }: Props) {
           <div className="field-row">
             <label className="field grow">
               {t.connect.host}
-              <input value={draft.host} onChange={(e) => update("host", e.target.value)} required />
+              <input value={draft.host} onChange={(e) => changeHost(e.target.value)} required />
             </label>
             <label className="field port">
               {t.connect.port}
@@ -230,7 +246,13 @@ export function ConnectionForm({ onConnected }: Props) {
           </div>
           <label className="field">
             {t.connect.sslMode}
-            <select value={draft.sslMode} onChange={(e) => update("sslMode", e.target.value as SslMode)}>
+            <select
+              value={draft.sslMode}
+              onChange={(e) => {
+                setSslChosen(true);
+                update("sslMode", e.target.value as SslMode);
+              }}
+            >
               {SSL_MODES.map((mode) => (
                 <option key={mode} value={mode}>
                   {t.connect.sslModes[mode]}
@@ -245,6 +267,15 @@ export function ConnectionForm({ onConnected }: Props) {
               onChange={(e) => setSavePassword(e.target.checked)}
             />
             {t.connect.savePassword}
+          </label>
+          {weakSsl && <p className="error-text ssl-warning">{weakSsl}</p>}
+          <label className="checkbox" title={t.connect.allowSnapshotApplyTitle}>
+            <input
+              type="checkbox"
+              checked={draft.allowSnapshotApply ?? isLocalHost(draft.host)}
+              onChange={(e) => setDraft({ ...draft, allowSnapshotApply: e.target.checked })}
+            />
+            {t.connect.allowSnapshotApply}
           </label>
           <label className="checkbox" title={t.connect.recordHistoryTitle}>
             <input

@@ -18,8 +18,8 @@ export const en = {
   errors: {
     closed: "The connection is closed.",
     refused: {
-      notLocal:
-        "Only local databases (localhost, a loopback address or a Unix socket) can be changed from a snapshot.",
+      notAllowed:
+        "This connection doesn't allow snapshots to change its database. Allow it in the connection's settings if it's a development database.",
       planChanged: "The database or the snapshot changed since you reviewed the plan. Review it again.",
       planBlocked: "The plan has changes Dolmen can't make. See the plan.",
       destructiveNotAllowed:
@@ -91,6 +91,14 @@ export const en = {
     sslModes: { disable: "Disable", prefer: "Prefer", require: "Require", "verify-full": "Verify full" },
     savePassword: "Save password in the OS keychain",
     recordHistory: "Keep a history of the queries run",
+    allowSnapshotApply: "Let snapshots change this database",
+    allowSnapshotApplyTitle:
+      "For development databases. Off by default for servers elsewhere; turn it off for production even when it is reached through localhost, such as an SSH tunnel or a proxy.",
+    sslWeak: {
+      disable: "Without TLS, the password and data cross the network in the clear.",
+      prefer: "Prefer falls back to no encryption when an attacker strips TLS. Use Verify full for servers elsewhere.",
+      require: "Require encrypts but doesn't check the certificate, so an attacker in between can still read everything. Use Verify full.",
+    },
     recordHistoryTitle: "Turn off for databases whose SQL shouldn't be kept on this computer, such as production",
     confirmDelete: "Click again to delete",
     connect: "Connect",
@@ -401,8 +409,9 @@ export const en = {
 
   apply: {
     title: (label: string) => `Update the database to match ${label}`,
-    notLocal:
-      "Only local databases (localhost, a loopback address or a Unix socket) can be changed from a snapshot. This connection's server is elsewhere, so the plan is shown for review only.",
+    notAllowed:
+      "This connection doesn't allow snapshots to change its database, so the plan is shown for review only. Allow it in the connection's settings if this is a development database.",
+    target: (label: string, address: string) => `Changes ${label} (${address})`,
     planning: "Planning…",
     blockersTitle: "Dolmen can't make these changes, so the plan can't be applied:",
     blockers: {

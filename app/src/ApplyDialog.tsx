@@ -5,6 +5,8 @@ import { useT } from "./settings";
 
 interface Props {
   sessionId: number;
+  /** The database the plan changes: the connection's name and address. */
+  target: { label: string; address: string };
   dir: string;
   /** The commit or tag to match, or null for the folder's files. */
   rev: string | null;
@@ -17,9 +19,9 @@ interface Props {
 /**
  * Shows the plan that makes the database match a snapshot, and applies it in
  * one transaction once reviewed. Steps that drop data stay blocked until the
- * user allows them, and only local databases can be changed.
+ * user allows them, and only databases whose connection allows it can be changed.
  */
-export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: Props) {
+export function ApplyDialog({ sessionId, target, dir, rev, label, onClose, onApplied }: Props) {
   const t = useT();
   const [renames, setRenames] = useState<Rename[]>([]);
   const [preview, setPreview] = useState<ApplyPreview | null>(null);
@@ -45,7 +47,7 @@ export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: 
   const destructive = plan?.steps.filter((step) => step.destructive).length ?? 0;
   const canApply =
     !!plan &&
-    !!preview?.local &&
+    !!preview?.allowed &&
     !loading &&
     !applying &&
     plan.steps.length > 0 &&
@@ -101,9 +103,8 @@ export function ApplyDialog({ sessionId, dir, rev, label, onClose, onApplied }: 
         </header>
 
         <div className="dialog-body">
-          {preview && !preview.local && (
-            <p className="error-box">{t.apply.notLocal}</p>
-          )}
+          <p className="muted">{t.apply.target(target.label, target.address)}</p>
+          {preview && !preview.allowed && <p className="error-box">{t.apply.notAllowed}</p>}
           {loading && <p className="muted">{t.apply.planning}</p>}
           {plan && plan.blockers.length > 0 && (
             <div className="error-box">

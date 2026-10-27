@@ -30,6 +30,8 @@ pub struct Sessions {
 struct Open {
     session: Arc<Session>,
     connection: history::Connection,
+    /// Whether snapshot plans may change this database.
+    apply_allowed: bool,
 }
 
 impl Sessions {
@@ -40,6 +42,16 @@ impl Sessions {
             .get(&id)
             .map(|open| Arc::clone(&open.session))
             .ok_or(Error::Closed)
+    }
+
+    /// Whether snapshot plans may change the session's database: as its saved
+    /// connection says, else only for a server on this machine.
+    pub(crate) fn apply_allowed(&self, id: u64) -> bool {
+        self.open
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|open| open.apply_allowed)
     }
 
     /// The session's connection, as the query history records it.
@@ -62,6 +74,8 @@ pub struct SessionInfo {
     saved_id: Option<String>,
     /// The saved connection's name, or user@host:port/database.
     label: String,
+    /// user@host:port/database, to say which server something will change.
+    address: String,
 }
 
 /// Connects with `config`. Without a password in `config`, the stored password of
@@ -90,6 +104,14 @@ pub async fn pg_connect(
     }
     let session = Session::connect(&config).await?;
     let id = sessions.next_id.fetch_add(1, Ordering::Relaxed);
+    let apply_allowed = saved
+        .as_ref()
+        .and_then(|c| c.allow_snapshot_apply)
+        .unwrap_or_else(|| config.is_local());
+    let address = format!(
+        "{}@{}:{}/{}",
+        config.user, config.host, config.port, config.database
+    );
     let connection = history::Connection {
         saved_id: saved.as_ref().map(|c| c.id.clone()),
         label: saved.as_ref().map_or_else(
@@ -109,12 +131,14 @@ pub async fn pg_connect(
         database: config.database,
         saved_id: connection.saved_id.clone(),
         label: connection.label.clone(),
+        address,
     };
     sessions.open.lock().unwrap().insert(
         id,
         Open {
             session: Arc::new(session),
             connection,
+            apply_allowed,
         },
     );
     Ok(info)

@@ -94,7 +94,8 @@ impl ConnectConfig {
 
 impl ConnectConfig {
     /// Whether the server runs on this machine: `localhost`, a loopback
-    /// address or a Unix socket. Only local databases take snapshot plans.
+    /// address or a Unix socket. By default only these take snapshot plans,
+    /// unless a saved connection says otherwise.
     pub fn is_local(&self) -> bool {
         self.host.eq_ignore_ascii_case("localhost")
             || self.host.starts_with('/')

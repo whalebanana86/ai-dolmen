@@ -125,6 +125,7 @@ fn saved_connections_use_camel_case() {
             path: "db/schema".into(),
         }),
         record_history: false,
+        allow_snapshot_apply: Some(true),
     };
     let value = serde_json::to_value(&connection).unwrap();
     assert_eq!(
@@ -141,6 +142,7 @@ fn saved_connections_use_camel_case() {
             "snapshotDir": null,
             "snapshotRemote": { "url": "git@github.com:you/schema.git", "path": "db/schema" },
             "recordHistory": false,
+            "allowSnapshotApply": true,
         })
     );
     assert_eq!(
@@ -206,11 +208,11 @@ fn plans_and_renames_use_camel_case_and_kind_tags() {
     assert_eq!(back, rename);
     assert_eq!(
         serde_json::to_value(Error::Refused {
-            reason: dolmen_core::Refusal::NotLocal,
+            reason: dolmen_core::Refusal::NotAllowed,
             message: "no".into()
         })
         .unwrap(),
-        json!({ "kind": "refused", "reason": "notLocal", "message": "no" })
+        json!({ "kind": "refused", "reason": "notAllowed", "message": "no" })
     );
     assert_eq!(
         serde_json::to_value(dolmen_core::postgres::migrate::Blocker::EnumValuesRemoved {

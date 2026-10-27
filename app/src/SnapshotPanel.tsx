@@ -9,6 +9,8 @@ import { useT } from "./settings";
 
 interface Props {
   sessionId: number;
+  /** The connection the panel changes when a snapshot is applied. */
+  target: { label: string; address: string };
   /** The database name, for the default commit message. */
   database: string;
   /** The snapshot folder: chosen, or inside Dolmen's clone of `remote` once it's ready. */
@@ -46,6 +48,7 @@ type Tab = "changes" | "history";
  */
 export function SnapshotPanel({
   sessionId,
+  target,
   database,
   dir,
   remote,
@@ -269,6 +272,7 @@ export function SnapshotPanel({
         {dir && applyTarget && (
           <ApplyDialog
             sessionId={sessionId}
+            target={target}
             dir={dir}
             rev={applyTarget.rev}
             label={applyTarget.label}
