@@ -527,7 +527,8 @@ export const ko: Messages = {
     fileFilter: "CSV·TSV·텍스트 파일",
     encoding: "인코딩",
     encodings: { utf8: "UTF-8", eucKr: "EUC-KR (CP949, 한글 Excel)" },
-    readAsEucKr: "UTF-8이 아니어서, 한글 Excel이 CSV를 저장하는 EUC-KR로 읽었습니다.",
+    notUtf8:
+      "이 파일은 UTF-8이 아닙니다. 한글 Excel이 저장한 EUC-KR로 보입니다. UTF-8로 저장해 다시 고르거나, 인코딩에서 EUC-KR을 고르세요.",
     column: (n) => `${n}열`,
     skip: "건너뛰기",
     firstRows: (n) => `파일의 처음 ${count(n, "행")}`,

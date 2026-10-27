@@ -109,9 +109,10 @@ like), JSON or `INSERT` statements. A result's statement runs again in a
 read-only transaction, so all its rows are saved, not only the ones shown.
 
 **Import data…** on a table appends a CSV file's rows with `COPY`, in one
-transaction. Dolmen guesses the delimiter, reads files that Korean Excel saves
-in EUC-KR (CP949), matches the file's columns to the table's by name and lets
-you skip some. A bad value stops the import with its line and column, and
+transaction. Files are read as UTF-8, and one that isn't is refused rather
+than imported garbled; choose EUC-KR (CP949) for files Korean Excel saves that
+way. Dolmen guesses the delimiter, matches the file's columns to the table's by
+name and lets you skip some. A bad value stops the import with its line and column, and
 nothing is added.
 
 ## Production safety

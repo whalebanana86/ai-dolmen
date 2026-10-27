@@ -539,7 +539,8 @@ export const en = {
     fileFilter: "CSV, TSV and text files",
     encoding: "Encoding",
     encodings: { utf8: "UTF-8", eucKr: "EUC-KR (CP949, Korean Excel)" },
-    readAsEucKr: "The file isn't UTF-8, so it is read as EUC-KR, as Korean Excel saves CSV.",
+    notUtf8:
+      "This file isn't UTF-8; it looks like EUC-KR, as Korean Excel saves CSV. Save it as UTF-8 and choose it again, or pick EUC-KR as the encoding.",
     column: (n: number) => `Column ${n}`,
     skip: "Skip",
     firstRows: (n: number) => `The first ${plural(n, "row", "rows")} of the file`,

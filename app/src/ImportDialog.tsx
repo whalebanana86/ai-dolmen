@@ -33,9 +33,6 @@ export function ImportDialog({ sessionId, schema, table, onClose }: Props) {
   const [delimiter, setDelimiter] = useState<Delimiter | null>(null);
   const [header, setHeader] = useState(true);
   const [preview, setPreview] = useState<CsvPreview | null>(null);
-  // Whether the user picked the encoding, and whether it was switched to EUC-KR for them.
-  const [encodingChosen, setEncodingChosen] = useState(false);
-  const [switchedToEucKr, setSwitchedToEucKr] = useState(false);
   const [previewError, setPreviewError] = useState<unknown>(null);
   const [mapping, setMapping] = useState<(string | null)[]>([]);
   const [phase, setPhase] = useState<Phase>({ kind: "choosing" });
@@ -54,8 +51,6 @@ export function ImportDialog({ sessionId, schema, table, onClose }: Props) {
     setPath(picked);
     setEncoding("utf8");
     setDelimiter(null);
-    setEncodingChosen(false);
-    setSwitchedToEucKr(false);
     setPhase({ kind: "choosing" });
   }
 
@@ -73,12 +68,6 @@ export function ImportDialog({ sessionId, schema, table, onClose }: Props) {
       .preview(path, delimiter, encoding)
       .then((read) => {
         if (!current) return;
-        // Korean Excel saves CSV in EUC-KR: read it that way unless the user chose otherwise.
-        if (read.looksEucKr && encoding === "utf8" && !encodingChosen) {
-          setSwitchedToEucKr(true);
-          setEncoding("eucKr");
-          return;
-        }
         setPreview(read);
         if (delimiter === null) setDelimiter(read.delimiter);
       })
@@ -107,7 +96,9 @@ export function ImportDialog({ sessionId, schema, table, onClose }: Props) {
   const duplicate = chosen.find((column, i) => chosen.indexOf(column) !== i);
   const identity = targets.filter((column) => column.identity && chosen.includes(column.name)).map((c) => c.name);
   const empty = preview !== null && sample.length === 0;
-  const canImport = !!path && !!preview && !running && chosen.length > 0 && !duplicate && !empty;
+  // Read as UTF-8, such a file would only fail; EUC-KR is read only when chosen.
+  const notUtf8 = encoding === "utf8" && !!preview?.looksEucKr;
+  const canImport = !!path && !!preview && !running && chosen.length > 0 && !duplicate && !empty && !notUtf8;
 
   async function run() {
     if (!path || !preview || !delimiter) return;
@@ -166,10 +157,7 @@ export function ImportDialog({ sessionId, schema, table, onClose }: Props) {
                 {t.transfer.encoding}
                 <select
                   value={encoding}
-                  onChange={(e) => {
-                    setEncodingChosen(true);
-                    setEncoding(e.target.value as FileEncoding);
-                  }}
+                  onChange={(e) => setEncoding(e.target.value as FileEncoding)}
                   disabled={running}
                 >
                   {(["utf8", "eucKr"] as const).map((e) => (
@@ -199,7 +187,7 @@ export function ImportDialog({ sessionId, schema, table, onClose }: Props) {
               </label>
             </div>
           )}
-          {switchedToEucKr && !encodingChosen && <p className="muted">{t.transfer.readAsEucKr}</p>}
+          {notUtf8 && <p className="error-text">{t.transfer.notUtf8}</p>}
           {previewError !== null && <TransferError error={previewError} />}
           {empty && <p className="muted">{t.transfer.emptyFile}</p>}
 
