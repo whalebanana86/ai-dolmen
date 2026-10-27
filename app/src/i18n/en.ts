@@ -31,6 +31,7 @@ export const en = {
         "The snapshot folder has changes that aren't committed. Commit or discard them before switching branches.",
       readOnly: "The connection is read-only. Allow writing with the lock in the toolbar first.",
       noColumns: "There are no columns to export or import.",
+      developmentBuild: "A development build can't install updates. Update a Dolmen installed from a release.",
     },
     ai: {
       noApiKey: "There's no Anthropic API key yet. Add one in Settings (⚙) to use AI.",
@@ -75,6 +76,21 @@ export const en = {
         "Use your own key from the Anthropic Console; Anthropic bills it for what you use. Dolmen keeps it in the OS keychain and sends it only to the Anthropic API.",
       privacy:
         "AI requests send the database's structure (tables, columns, comments), the SQL you ask about and its error messages to Anthropic. Dolmen doesn't read table rows for AI, but values written in the SQL or in an error message go along.",
+    },
+    updates: {
+      title: "Updates",
+      current: (version: string) => `Dolmen ${version}`,
+      check: "Check for updates",
+      checking: "Checking…",
+      latest: "This is the latest version.",
+      available: (version: string) => `A new version is out: ${version}`,
+      install: "Install and restart",
+      downloading: (percent: number | null) => (percent === null ? "Downloading…" : `Downloading… ${percent}%`),
+      installing: "Installing…",
+      restartNote: "Dolmen restarts once it's installed: open connections close and running queries stop.",
+      checkFailed: (message: string) => `Couldn't check for updates: ${message}`,
+      installFailed: (message: string) => `Couldn't install the update: ${message}`,
+      help: "Dolmen looks for a new version on GitHub only when you check, and installs only updates signed by the Dolmen project.",
     },
   },
 

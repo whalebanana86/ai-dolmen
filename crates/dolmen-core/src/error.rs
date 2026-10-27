@@ -84,6 +84,8 @@ pub enum Refusal {
     ReadOnly,
     /// An export's statement returns no columns, or an import fills none.
     NoColumns,
+    /// A development build can't install an update over itself.
+    DevelopmentBuild,
 }
 
 impl From<keyring_core::Error> for Error {

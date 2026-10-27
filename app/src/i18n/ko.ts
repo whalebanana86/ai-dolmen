@@ -28,6 +28,7 @@ export const ko: Messages = {
       uncommittedChanges: "스냅샷 폴더에 커밋하지 않은 변경이 있습니다. 커밋하거나 되돌린 뒤 브랜치를 바꿔 주세요.",
       readOnly: "읽기 전용 연결입니다. 먼저 툴바의 자물쇠로 쓰기를 허용하세요.",
       noColumns: "내보내거나 가져올 컬럼이 없습니다.",
+      developmentBuild: "개발용 빌드에는 업데이트를 설치할 수 없습니다. 릴리스에서 설치한 Dolmen으로 업데이트해 주세요.",
     },
     ai: {
       noApiKey: "아직 Anthropic API 키가 없습니다. AI를 쓰려면 설정(⚙)에서 키를 추가해 주세요.",
@@ -72,6 +73,21 @@ export const ko: Messages = {
         "Anthropic Console에서 만든 본인의 키를 씁니다. 사용한 만큼 Anthropic이 청구합니다. Dolmen은 키를 OS 키체인에 두고 Anthropic API에만 보냅니다.",
       privacy:
         "AI 요청에는 데이터베이스 구조(테이블, 컬럼, 주석), 물어본 SQL과 그 오류 메시지가 담겨 Anthropic으로 전송됩니다. Dolmen이 AI를 위해 테이블의 행을 읽지는 않지만, SQL이나 오류 메시지 안에 적힌 값은 함께 전송됩니다.",
+    },
+    updates: {
+      title: "업데이트",
+      current: (version) => `Dolmen ${version}`,
+      check: "업데이트 확인",
+      checking: "확인하는 중…",
+      latest: "최신 버전입니다.",
+      available: (version) => `새 버전이 나왔습니다: ${version}`,
+      install: "설치하고 다시 시작",
+      downloading: (percent) => (percent === null ? "내려받는 중…" : `내려받는 중… ${percent}%`),
+      installing: "설치하는 중…",
+      restartNote: "설치가 끝나면 Dolmen이 다시 시작됩니다. 열린 연결은 끊기고 실행 중인 쿼리는 중단됩니다.",
+      checkFailed: (message) => `업데이트를 확인하지 못했습니다: ${message}`,
+      installFailed: (message) => `업데이트를 설치하지 못했습니다: ${message}`,
+      help: "업데이트 확인을 누를 때만 GitHub에서 새 버전을 찾고, Dolmen 프로젝트가 서명한 업데이트만 설치합니다.",
     },
   },
 

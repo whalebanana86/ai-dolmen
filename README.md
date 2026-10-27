@@ -20,6 +20,11 @@ the app: open it from *System Settings → Privacy & Security → Open Anyway*, 
 run `xattr -dr com.apple.quarantine /Applications/Dolmen.app` once. On Windows,
 SmartScreen asks; choose *More info → Run anyway*.
 
+To update, choose *Settings (⚙) → Updates → Check for updates*. Dolmen installs
+a newer release only if it is signed with the project's key, then restarts; it
+looks for one only when you ask. On Linux, the AppImage updates this way; for a
+`.deb` or `.rpm`, install the new package from Releases.
+
 ## Planned features
 
 - **Schema version control in Git** — changes made in the GUI or the SQL editor are captured as a readable schema snapshot and migration files, committed to your repository. Drift detection tells you when a database no longer matches the repository.
@@ -186,6 +191,13 @@ To release, set the version in `Cargo.toml` (`[workspace.package]`) and
 [Release workflow](.github/workflows/release.yml) builds the installers and
 attaches them to a draft release to review and publish. It signs and notarizes
 the macOS app when the Apple secrets it lists are set.
+
+Update packages are signed with the private key in the `TAURI_SIGNING_PRIVATE_KEY`
+secret, and installed apps accept only updates signed with it: its public key
+is in `app/src-tauri/tauri.conf.json`. Keep the private key safe and never
+replace it, or installed apps can't update any more. To build a release
+locally, set `TAURI_SIGNING_PRIVATE_KEY` to the key or its path and run
+`pnpm tauri build` in `app`.
 
 ## Repository layout
 

@@ -5,6 +5,10 @@ name: Release
 # publish by hand. Run by hand (Actions → Release → Run workflow), it builds the
 # installers as workflow artifacts only, without a release.
 #
+# Installed apps update from the latest.json the builds attach, and only
+# accept packages signed with the key in the TAURI_SIGNING_PRIVATE_KEY secret
+# (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD, if it has one).
+#
 # macOS builds are signed ad hoc unless these secrets are set:
 #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY
 #   and, to notarize, APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID.
@@ -29,6 +33,15 @@ jobs:
     outputs:
       id: ${{ steps.draft.outputs.id }}
     steps:
+      # Checked first: without it every build fails at its end.
+      - name: Check the update signing key is set
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY secret: installed apps accept only updates signed with its key."
+            exit 1
+          fi
       - uses: actions/checkout@v7
       - name: Check the tag matches the version
         run: |
@@ -117,8 +130,37 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
           args: --target ${{ matrix.target }}
           releaseId: ${{ needs.release.outputs.id }}
           uploadWorkflowArtifacts: ${{ needs.release.result == 'skipped' }}
+
+  # Each build adds its platform to the release's latest.json by downloading,
+  # changing and uploading it again, so two builds finishing together can drop
+  # one. Re-running that build adds it back.
+  updates:
+    name: Check every platform can update
+    needs: [release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ needs.release.outputs.id }}
+        run: |
+          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE/assets" --jq '.[] | select(.name == "latest.json") | .id')
+          if [ -z "$asset" ]; then
+            echo "::error::The release has no latest.json."
+            exit 1
+          fi
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > latest.json
+          jq -r '.version, (.platforms | keys | join(", "))' latest.json
+          missing=$(jq -r '["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "windows-x86_64"] - (.platforms | keys) | join(", ")' latest.json)
+          if [ -n "$missing" ]; then
+            echo "::error::latest.json has no update for $missing. Re-run that build, then this job."
+            exit 1
+          fi

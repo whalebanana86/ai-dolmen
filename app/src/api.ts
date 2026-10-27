@@ -247,7 +247,8 @@ export type Refusal =
   | "badSnapshotPath"
   | "uncommittedChanges"
   | "readOnly"
-  | "noColumns";
+  | "noColumns"
+  | "developmentBuild";
 
 /** Why asking the AI failed. */
 export type AiFailure =
@@ -294,6 +295,28 @@ export interface AiAnswer {
 export function appVersion() {
   return invoke<string>("app_version");
 }
+
+/** A release newer than the running app. */
+export interface AvailableUpdate {
+  version: string;
+  notes: string | null;
+}
+
+export interface UpdateDownload {
+  bytes: number;
+  total: number | null;
+}
+
+export const updates = {
+  /** The newest release from the project's GitHub releases, or null when this version is the latest. */
+  check: () => invoke<AvailableUpdate | null>("update_check"),
+  /** Downloads and installs what `check` found, then restarts the app. */
+  install: (onProgress: (download: UpdateDownload) => void) => {
+    const progress = new Channel<UpdateDownload>();
+    progress.onmessage = onProgress;
+    return invoke<void>("update_install", { progress });
+  },
+};
 
 export const pg = {
   /** Without a password in `config`, the stored password of `savedId` is used. */

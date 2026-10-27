@@ -38,6 +38,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "publisher": "Dolmen contributors",
     "copyright": "Copyright 2026 Dolmen contributors",
     "license": "Apache-2.0",
@@ -56,6 +57,13 @@
     "macOS": {
       "minimumSystemVersion": "11.0",
       "signingIdentity": "-"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNDQTk5MUY1QUM1OEU5OTUKUldTVjZWaXM5WkdwUEYyTTFNelVPSlU2eXpUQmtBdnJCMUN5OEo0MUk0cUVwY3gyRWV1ZEhRVVUK",
+      "endpoints": ["https://github.com/whalebanana86/ai-dolmen/releases/latest/download/latest.json"],
+      "requireSignedVersion": true
     }
   }
 }

@@ -19,6 +19,11 @@
 `xattr -dr com.apple.quarantine /Applications/Dolmen.app`을 한 번 실행하세요.
 Windows에서 SmartScreen이 막으면 *추가 정보 → 실행*을 고르세요.
 
+업데이트는 *설정(⚙) → 업데이트 → 업데이트 확인*에서 합니다. 프로젝트 키로 서명된
+새 릴리스만 설치한 뒤 다시 시작하며, 확인을 누를 때만 새 버전을 찾습니다.
+Linux에서는 AppImage가 이렇게 업데이트되고, `.deb`나 `.rpm`은 Releases에서 새
+패키지를 받아 설치하세요.
+
 ## 계획된 기능
 
 - **Git 기반 스키마 버전관리** — GUI나 SQL 에디터에서 바꾼 내용을 읽기 쉬운 스키마 스냅샷과 마이그레이션 파일로 만들어 저장소에 커밋합니다. 데이터베이스가 저장소와 어긋나면 드리프트로 알려 줍니다.
@@ -172,6 +177,12 @@ DOLMEN_TEST_PG_HOST=localhost DOLMEN_TEST_PG_PORT=55432 cargo test
 [Release 워크플로](.github/workflows/release.yml)가 설치 파일을 빌드해 초안
 릴리스에 붙이면, 검토한 뒤 직접 게시합니다. 워크플로에 적힌 Apple 시크릿이 있으면
 macOS 앱을 서명하고 공증합니다.
+
+업데이트 파일은 `TAURI_SIGNING_PRIVATE_KEY` 시크릿의 개인 키로 서명하고, 설치된 앱은
+그 키로 서명된 업데이트만 받습니다. 공개 키는 `app/src-tauri/tauri.conf.json`에
+있습니다. 개인 키를 잃거나 바꾸면 이미 설치된 앱이 더는 업데이트되지 않으니 안전하게
+보관하세요. 로컬에서 릴리스를 빌드하려면 `TAURI_SIGNING_PRIVATE_KEY`에 키나 그 경로를
+넣고 `app`에서 `pnpm tauri build`를 실행하세요.
 
 ## 저장소 구조
 

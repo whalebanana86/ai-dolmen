@@ -1461,6 +1461,19 @@ button.primary.danger-fill {
   min-width: 0;
 }
 
+.update-notes {
+  max-height: 160px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 /* Splitters: the 1px line between panels, with a wider area to grab */
 
 .splitter {

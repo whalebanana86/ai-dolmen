@@ -5,6 +5,7 @@ mod pg;
 mod snapshot;
 mod sql;
 mod transfer;
+mod updates;
 
 use dolmen_core::ai::ApiKeys;
 use dolmen_core::connections::{ConnectionStore, native_credential_store};
@@ -20,6 +21,7 @@ fn app_version() -> &'static str {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let path = app.path().app_config_dir()?.join("connections.json");
             // Without a credential store the app still works; passwords and the
@@ -37,6 +39,7 @@ pub fn run() {
             Ok(())
         })
         .manage(pg::Sessions::default())
+        .manage(updates::Updates::default())
         .invoke_handler(tauri::generate_handler![
             app_version,
             connections::connections_list,
@@ -86,6 +89,8 @@ pub fn run() {
             history::history_set_settings,
             history::editor_load,
             history::editor_save,
+            updates::update_check,
+            updates::update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

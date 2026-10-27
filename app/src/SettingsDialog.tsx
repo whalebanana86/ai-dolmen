@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AI_MODELS, AiModel, ai, errorMessage, history } from "./api";
+import { AI_MODELS, AiModel, AvailableUpdate, ai, appVersion, errorMessage, history, updates } from "./api";
 import { LOCALES, Locale, Theme, useSettings, useT } from "./settings";
 
 const THEMES: Theme[] = ["system", "light", "dark"];
@@ -46,6 +46,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </fieldset>
           <HistorySettings />
           <AiSettings />
+          <UpdateSettings />
         </div>
       </div>
     </div>
@@ -192,6 +193,93 @@ function AiSettings() {
       </div>
       <p className="muted">{t.settings.ai.keyHelp}</p>
       <p className="muted">{t.settings.ai.privacy}</p>
+    </fieldset>
+  );
+}
+
+type UpdatePhase =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "latest" }
+  | { kind: "available"; update: AvailableUpdate }
+  | { kind: "installing"; update: AvailableUpdate; percent: number | null }
+  | { kind: "failed"; message: string; update: AvailableUpdate | null };
+
+/** This version, and installing a newer release when asked to check. */
+function UpdateSettings() {
+  const t = useT();
+  const [version, setVersion] = useState<string | null>(null);
+  const [phase, setPhase] = useState<UpdatePhase>({ kind: "idle" });
+
+  useEffect(() => {
+    appVersion()
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
+
+  async function check() {
+    setPhase({ kind: "checking" });
+    try {
+      const update = await updates.check();
+      setPhase(update ? { kind: "available", update } : { kind: "latest" });
+    } catch (err) {
+      setPhase({ kind: "failed", message: t.settings.updates.checkFailed(errorMessage(err, t)), update: null });
+    }
+  }
+
+  async function install(update: AvailableUpdate) {
+    setPhase({ kind: "installing", update, percent: null });
+    try {
+      // Resolves only if the app didn't restart.
+      await updates.install(({ bytes, total }) =>
+        setPhase((current) =>
+          current.kind === "installing"
+            ? { ...current, percent: total ? Math.min(100, Math.round((bytes / total) * 100)) : null }
+            : current,
+        ),
+      );
+    } catch (err) {
+      setPhase({ kind: "failed", message: t.settings.updates.installFailed(errorMessage(err, t)), update });
+    }
+  }
+
+  const update = phase.kind === "available" || phase.kind === "installing" || phase.kind === "failed" ? phase.update : null;
+  const busy = phase.kind === "checking" || phase.kind === "installing";
+
+  return (
+    <fieldset className="field ai-settings">
+      <legend>{t.settings.updates.title}</legend>
+      <div className="key-row">
+        <span>{version && t.settings.updates.current(version)}</span>
+        <span className="spacer" />
+        {update ? (
+          <button className="primary" onClick={() => install(update)} disabled={busy}>
+            {t.settings.updates.install}
+          </button>
+        ) : (
+          <button onClick={check} disabled={busy}>
+            {phase.kind === "checking" ? t.settings.updates.checking : t.settings.updates.check}
+          </button>
+        )}
+      </div>
+      <div role="status" aria-live="polite">
+        {phase.kind === "latest" && <span className="muted">{t.settings.updates.latest}</span>}
+        {update && <strong>{t.settings.updates.available(update.version)}</strong>}
+        {phase.kind === "installing" && (
+          <div className="transfer-progress">
+            <span>
+              {phase.percent === 100 ? t.settings.updates.installing : t.settings.updates.downloading(phase.percent)}
+            </span>
+            <span className="plan-bar">
+              <span style={{ width: `${phase.percent ?? 0}%` }} />
+            </span>
+          </div>
+        )}
+      </div>
+      {update?.notes && <pre className="update-notes">{update.notes}</pre>}
+      {update && phase.kind !== "failed" && <p className="muted">{t.settings.updates.restartNote}</p>}
+      {phase.kind === "failed" && <span className="error-text">{phase.message}</span>}
+      <p className="muted">{t.settings.updates.help}</p>
     </fieldset>
   );
 }
