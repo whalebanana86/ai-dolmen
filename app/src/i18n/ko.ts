@@ -120,7 +120,7 @@ export const ko: Messages = {
     erdTitle: "테이블과 관계를 다이어그램으로 봅니다",
     running: "실행 중…",
     runStatus: (line, done, total, ms) => `${line}번 줄부터 · 문장 ${total}개 중 ${done}개 · ${ms} ms`,
-    errorLocation: (line, column) => `${line}행 ${column}열`,
+    errorLocation: (line, column) => `${line}번 줄 ${column}번째 글자`,
     readOnly: "읽기 전용",
     writable: "쓰기 가능",
     readOnlyTitle: "데이터를 바꾸는 문장은 거부됩니다. 누르면 쓰기를 허용합니다.",
