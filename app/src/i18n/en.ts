@@ -213,6 +213,8 @@ export const en = {
     constraints: "Constraints",
     indexes: "Indexes",
     partitionKey: "Partitioned by",
+    partitionOf: "Partition of",
+    partitions: "Partitions",
     definition: "Definition",
     arguments: "Arguments",
     none: "None",

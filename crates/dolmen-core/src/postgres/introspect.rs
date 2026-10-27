@@ -11,7 +11,8 @@ use tokio_postgres::GenericClient;
 use crate::Error;
 use crate::schema::{
     Column, Constraint, ConstraintKind, Database, EnumType, Extension, ForeignKey, Function,
-    FunctionKind, Generated, Identity, Index, Schema, Sequence, Table, TableKind, View,
+    FunctionKind, Generated, Identity, Index, PartitionOf, Schema, Sequence, Table, TableKind,
+    View,
 };
 
 /// Matches user schemas through the alias `n` for `pg_namespace`.
@@ -126,9 +127,18 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                 "SELECT c.oid, n.nspname, c.relname, c.relkind::text,
                         CASE WHEN c.relkind IN ('v', 'm') THEN pg_catalog.pg_get_viewdef(c.oid, true) END,
                         pg_catalog.obj_description(c.oid, 'pg_class'),
-                        CASE WHEN c.relkind = 'p' THEN pg_catalog.pg_get_partkeydef(c.oid) END
+                        CASE WHEN c.relkind = 'p' THEN pg_catalog.pg_get_partkeydef(c.oid) END,
+                        CASE WHEN c.relispartition THEN pg_catalog.pg_get_expr(c.relpartbound, c.oid) END,
+                        parent.nspname::text, parent.relname::text
                  FROM pg_catalog.pg_class c
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                 LEFT JOIN LATERAL (
+                     SELECT pn.nspname, p.relname
+                     FROM pg_catalog.pg_inherits inh
+                     JOIN pg_catalog.pg_class p ON p.oid = inh.inhparent
+                     JOIN pg_catalog.pg_namespace pn ON pn.oid = p.relnamespace
+                     WHERE inh.inhrelid = c.oid AND c.relispartition
+                 ) parent ON true
                  WHERE c.relkind IN ('r', 'p', 'f', 'v', 'm') AND {USER_SCHEMAS} AND {}
                  ORDER BY n.nspname COLLATE \"C\", c.relname COLLATE \"C\"",
                 not_from_extension("c.oid")
@@ -160,6 +170,14 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                     indexes: Vec::new(),
                     partition_key: row.get(6),
                     comment,
+                    partition_of: match (row.get(7), row.get(8), row.get(9)) {
+                        (Some(bound), Some(schema), Some(table)) => Some(PartitionOf {
+                            schema,
+                            table,
+                            bound,
+                        }),
+                        _ => None,
+                    },
                 });
                 Relation::Table {
                     schema,
@@ -284,6 +302,9 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                      SELECT 1 FROM pg_catalog.pg_constraint con
                      WHERE con.conrelid = i.indrelid AND con.conindid = i.indexrelid
                        AND con.contype IN ('p', 'u', 'x'))
+                   -- A partition's index attached to its parent's comes with the parent's.
+                   AND NOT EXISTS (
+                     SELECT 1 FROM pg_catalog.pg_inherits inh WHERE inh.inhrelid = i.indexrelid)
                  ORDER BY i.indrelid, ic.relname COLLATE \"C\""
             ),
             &[],

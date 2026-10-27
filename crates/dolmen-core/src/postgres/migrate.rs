@@ -6,7 +6,7 @@
 //! constraints, indexes) and dropped tables; create functions and tables; alter
 //! tables; add constraints, indexes and foreign keys; create views; drop the rest.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -166,6 +166,9 @@ enum Phase {
     DropTable,
     Function,
     CreateTable,
+    /// Partitions, after the tables they belong to: depth 1 for a partition
+    /// of a plain partitioned table, 2 for one of a partition, and so on.
+    CreatePartition(u8),
     AlterTable,
     AddConstraint,
     CreateIndex,
@@ -188,6 +191,8 @@ struct Planner {
     reshaped: bool,
     /// Leave views alone unless their own definition changed; see [`plan_keeping_views`].
     keep_views: bool,
+    /// The target's tables, by schema and name, with how deep in partitions they are.
+    target_tables: HashMap<(String, String), u8>,
 }
 
 impl Planner {
@@ -272,6 +277,7 @@ impl Planner {
     }
 
     fn database(&mut self, current: &Database, target: &Database) {
+        self.target_tables = partition_depths(target);
         for extension in &target.extensions {
             if !current.extensions.iter().any(|e| e.name == extension.name) {
                 self.push(
@@ -478,9 +484,16 @@ impl Planner {
                 )
             ));
         }
-        self.push(Phase::CreateTable, sql, false);
+        let phase = match self
+            .target_tables
+            .get(&(schema.to_owned(), table.name.clone()))
+        {
+            Some(&depth) if depth > 0 => Phase::CreatePartition(depth),
+            _ => Phase::CreateTable,
+        };
+        self.push(phase, sql, false);
         for index in &table.indexes {
-            self.push(Phase::CreateIndex, format!("{};", index.definition), false);
+            self.push(Phase::CreateIndex, ddl::create_index(table, index), false);
         }
         for constraint in foreign_keys(table) {
             self.add_constraint(&name, constraint);
@@ -488,6 +501,14 @@ impl Planner {
     }
 
     fn drop_table(&mut self, schema: &str, table: &Table) {
+        // Dropping a partitioned table drops its partitions with it.
+        if let Some(parent) = &table.partition_of
+            && !self
+                .target_tables
+                .contains_key(&(parent.schema.clone(), parent.table.clone()))
+        {
+            return;
+        }
         let name = qualified(schema, &table.name);
         // Its foreign keys go first, in case it points at another dropped table.
         for constraint in foreign_keys(table) {
@@ -499,20 +520,26 @@ impl Planner {
 
     fn table(&mut self, schema: &str, current: &Table, target: &Table) {
         let name = qualified(schema, &target.name);
-        if current.kind != target.kind || current.partition_key != target.partition_key {
+        // Attaching and detaching partitions isn't planned.
+        if current.kind != target.kind
+            || current.partition_key != target.partition_key
+            || current.partition_of != target.partition_of
+        {
             self.blockers.push(Blocker::TableKindChanged { name });
             return;
         }
 
+        // A partition's columns are its parent's, which changes them for it.
+        let own_columns = target.partition_of.is_none();
         let dropped: Vec<&Column> = current
             .columns
             .iter()
-            .filter(|c| !target.columns.iter().any(|t| t.name == c.name))
+            .filter(|c| own_columns && !target.columns.iter().any(|t| t.name == c.name))
             .collect();
         let added: Vec<&Column> = target
             .columns
             .iter()
-            .filter(|t| !current.columns.iter().any(|c| c.name == t.name))
+            .filter(|t| own_columns && !current.columns.iter().any(|c| c.name == t.name))
             .collect();
         for column in &dropped {
             self.push(
@@ -548,7 +575,7 @@ impl Planner {
         }
         self.suggest_column_renames(schema, &target.name, &dropped, &added);
 
-        for column in &target.columns {
+        for column in target.columns.iter().filter(|_| own_columns) {
             if let Some(existing) = current.columns.iter().find(|c| c.name == column.name) {
                 self.column(&name, existing, column);
             }
@@ -578,7 +605,7 @@ impl Planner {
         }
         for index in &target.indexes {
             if !current.indexes.contains(index) {
-                self.push(Phase::CreateIndex, format!("{};", index.definition), false);
+                self.push(Phase::CreateIndex, ddl::create_index(target, index), false);
             }
         }
 
@@ -868,6 +895,42 @@ pub(crate) fn single(text: &str, statement: bool) -> bool {
     one && !bidi
 }
 
+/// Every table in `database`, with 0 for one that isn't a partition, 1 for a
+/// partition of a table that isn't, and so on.
+fn partition_depths(database: &Database) -> HashMap<(String, String), u8> {
+    let parents: HashMap<(String, String), (String, String)> = database
+        .schemas
+        .iter()
+        .flat_map(|s| {
+            s.tables.iter().map(move |t| {
+                let parent = t
+                    .partition_of
+                    .as_ref()
+                    .map(|p| (p.schema.clone(), p.table.clone()));
+                ((s.name.clone(), t.name.clone()), parent)
+            })
+        })
+        .filter_map(|(table, parent)| parent.map(|p| (table, p)))
+        .collect();
+    let mut depths = HashMap::new();
+    for schema in &database.schemas {
+        for table in &schema.tables {
+            let key = (schema.name.clone(), table.name.clone());
+            let mut depth = 0u8;
+            let mut at = &key;
+            while let Some(parent) = parents.get(at) {
+                depth = depth.saturating_add(1);
+                at = parent;
+                if depth == u8::MAX {
+                    break; // A cycle, which PostgreSQL wouldn't allow.
+                }
+            }
+            depths.insert(key, depth);
+        }
+    }
+    depths
+}
+
 type ViewKey = (String, String);
 
 fn all_views(database: &Database) -> BTreeMap<ViewKey, &View> {
@@ -1005,6 +1068,7 @@ mod tests {
             constraints,
             indexes: vec![],
             partition_key: None,
+            partition_of: None,
             comment: None,
         }
     }

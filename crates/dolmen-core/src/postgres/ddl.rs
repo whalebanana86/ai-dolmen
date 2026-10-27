@@ -6,7 +6,8 @@
 use serde::Deserialize;
 
 use crate::schema::{
-    Column, Constraint, EnumType, Extension, Function, Identity, Sequence, Table, TableKind, View,
+    Column, Constraint, EnumType, Extension, Function, Identity, Index, PartitionOf, Sequence,
+    Table, TableKind, View,
 };
 
 /// Any schema object, tagged by `type` so the app can ask for one object's DDL.
@@ -48,7 +49,7 @@ pub fn create_table(schema: &str, table: &Table) -> String {
     let name = qualified(schema, &table.name);
     let mut ddl = table_statement(schema, table, table.constraints.iter());
     for index in &table.indexes {
-        ddl.push_str(&format!("\n{};\n", index.definition));
+        ddl.push_str(&format!("\n{}\n", create_index(table, index)));
     }
     push_comments(
         &mut ddl,
@@ -66,6 +67,9 @@ pub(crate) fn table_statement<'a>(
     table: &Table,
     constraints: impl Iterator<Item = &'a Constraint>,
 ) -> String {
+    if let Some(parent) = &table.partition_of {
+        return partition_statement(schema, table, parent, constraints);
+    }
     let elements: Vec<String> = table
         .columns
         .iter()
@@ -97,6 +101,45 @@ pub(crate) fn table_statement<'a>(
     }
     ddl.push_str(";\n");
     ddl
+}
+
+/// A partition: its columns come from the parent, so only its own constraints
+/// are listed, then its bounds.
+fn partition_statement<'a>(
+    schema: &str,
+    table: &Table,
+    parent: &PartitionOf,
+    constraints: impl Iterator<Item = &'a Constraint>,
+) -> String {
+    let constraints: Vec<String> = constraints
+        .map(|c| format!("    CONSTRAINT {} {}", quote_ident(&c.name), c.definition))
+        .collect();
+    let mut ddl = format!(
+        "CREATE TABLE {} PARTITION OF {}",
+        qualified(schema, &table.name),
+        qualified(&parent.schema, &parent.table)
+    );
+    if !constraints.is_empty() {
+        ddl.push_str(&format!(" (\n{}\n)", constraints.join(",\n")));
+    }
+    ddl.push_str(&format!("\n{}", parent.bound));
+    if let Some(key) = &table.partition_key {
+        ddl.push_str(&format!(" PARTITION BY {key}"));
+    }
+    ddl.push_str(";\n");
+    ddl
+}
+
+/// An index's CREATE statement. A partitioned table's index reads back as
+/// `ON ONLY` the parent, which stays invalid until the partitions' indexes are
+/// attached; without ONLY, PostgreSQL makes and attaches those itself.
+pub(crate) fn create_index(table: &Table, index: &Index) -> String {
+    let definition = if table.kind == TableKind::Partitioned {
+        index.definition.replacen(" ON ONLY ", " ON ", 1)
+    } else {
+        index.definition.clone()
+    };
+    format!("{definition};")
 }
 
 /// A column as written in `CREATE TABLE` or `ADD COLUMN`.
@@ -497,6 +540,7 @@ mod tests {
                     "CREATE INDEX order_status_idx ON public.\"order\" USING btree (status)".into(),
             }],
             partition_key: None,
+            partition_of: None,
             comment: Some("orders".into()),
         };
 
@@ -537,6 +581,7 @@ COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
             constraints: vec![],
             indexes: vec![],
             partition_key: None,
+            partition_of: None,
             comment: None,
         };
         assert_eq!(
@@ -554,6 +599,7 @@ COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
             constraints: vec![],
             indexes: vec![],
             partition_key: Some("RANGE (at)".into()),
+            partition_of: None,
             comment: None,
         };
         assert_eq!(

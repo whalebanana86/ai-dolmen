@@ -35,6 +35,7 @@ fn database() -> Database {
                 constraints: vec![],
                 indexes: vec![],
                 partition_key: None,
+                partition_of: None,
                 comment: Some("people with an account".into()),
             }],
             views: vec![],

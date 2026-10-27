@@ -207,6 +207,8 @@ export const ko: Messages = {
     constraints: "제약 조건",
     indexes: "인덱스",
     partitionKey: "파티션 기준",
+    partitionOf: "파티션 소속",
+    partitions: "파티션",
     definition: "정의",
     arguments: "인자",
     none: "없음",

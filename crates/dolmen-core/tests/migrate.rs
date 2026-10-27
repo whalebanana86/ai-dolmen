@@ -428,6 +428,7 @@ async fn creates_tables_views_and_functions_from_the_detail_view() {
         ],
         indexes: vec![],
         partition_key: None,
+        partition_of: None,
         comment: Some("blog posts".into()),
     };
     let create = |edit: Edit| {
@@ -520,4 +521,103 @@ async fn knows_the_default_schema_inside_a_failed_transaction() {
     assert!(session.execute("BEGIN; SELECT 1 / 0", 0).await.is_err());
     assert_eq!(session.current_schema().await.unwrap(), before);
     run(&session, "ROLLBACK").await;
+}
+
+#[tokio::test]
+async fn recreates_partitions_as_partitions() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let _exclusive = exclusive().await;
+    let model = |database: Database| {
+        let mut database = database;
+        database.schemas.retain(|s| s.name == "part_test");
+        database.extensions.clear();
+        database
+    };
+    run(
+        &session,
+        "DROP SCHEMA IF EXISTS part_test CASCADE;
+         CREATE SCHEMA part_test;
+         CREATE TABLE part_test.events (
+           id bigint NOT NULL, at date NOT NULL, kind text, PRIMARY KEY (id, at)
+         ) PARTITION BY RANGE (at);
+         CREATE TABLE part_test.events_2025 PARTITION OF part_test.events
+           FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+         CREATE TABLE part_test.events_2026 PARTITION OF part_test.events
+           FOR VALUES FROM ('2026-01-01') TO ('2027-01-01') PARTITION BY HASH (id);
+         CREATE TABLE part_test.events_2026_even PARTITION OF part_test.events_2026
+           FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+         CREATE TABLE part_test.events_other PARTITION OF part_test.events DEFAULT;
+         CREATE INDEX events_kind_idx ON part_test.events (kind);
+         CREATE TABLE part_test.visits (
+           id bigint PRIMARY KEY, event_id bigint, event_at date,
+           FOREIGN KEY (event_id, event_at) REFERENCES part_test.events
+         );",
+    )
+    .await;
+    let original = model(session.introspect().await.unwrap());
+    let schema = &original.schemas[0];
+    let table = |name: &str| schema.tables.iter().find(|t| t.name == name).unwrap();
+    let partition = table("events_2025").partition_of.clone().unwrap();
+    assert_eq!(
+        (partition.table.as_str(), partition.bound.as_str()),
+        ("events", "FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')")
+    );
+    // What PostgreSQL copies onto partitions belongs to the parent.
+    assert!(table("events_2025").constraints.is_empty());
+    assert!(table("events_2025").indexes.is_empty());
+    assert_eq!(table("visits").constraints.len(), 2);
+    assert_eq!(
+        table("events_other").partition_of.as_ref().unwrap().bound,
+        "DEFAULT"
+    );
+
+    // Recreated from nothing, partitions are partitions again.
+    run(
+        &session,
+        "DROP SCHEMA part_test CASCADE; CREATE SCHEMA part_test",
+    )
+    .await;
+    let empty = session.introspect().await.unwrap();
+    apply(&session, &plan(&empty, &original, &[])).await;
+    assert_eq!(model(session.introspect().await.unwrap()), original);
+    let check = session
+        .execute(
+            "SELECT count(DISTINCT c.oid) FILTER (WHERE c.relispartition)::text,
+                    bool_and(i.indisvalid)::text
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'part_test'
+             LEFT JOIN pg_index i ON i.indrelid = c.oid
+             WHERE c.relkind IN ('r', 'p')",
+            1,
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(&check[0], dolmen_core::postgres::StatementResult::Rows { rows, .. }
+            if rows[0][0].as_deref() == Some("4") && rows[0][1].as_deref() == Some("true")),
+        "{check:?}"
+    );
+
+    // A column added to the parent is one step: the partitions follow it.
+    let mut wider = original.clone();
+    for table in &mut wider.schemas[0].tables {
+        if table.name.starts_with("events") {
+            let mut note = table.columns[2].clone();
+            note.name = "note".into();
+            table.columns.push(note);
+        }
+    }
+    let widen = plan(&original, &wider, &[]);
+    assert_eq!(
+        widen
+            .steps
+            .iter()
+            .map(|s| s.sql.as_str())
+            .collect::<Vec<_>>(),
+        ["ALTER TABLE part_test.events ADD COLUMN note text;"]
+    );
+    apply(&session, &widen).await;
+    assert_eq!(model(session.introspect().await.unwrap()), wider);
+    run(&session, "DROP SCHEMA part_test CASCADE").await;
 }

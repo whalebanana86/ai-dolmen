@@ -40,6 +40,19 @@ pub struct Table {
     /// The `PARTITION BY` clause of a partitioned table, e.g. `RANGE (created_at)`.
     pub partition_key: Option<String>,
     pub comment: Option<String>,
+    /// For a partition, the table it belongs to; its columns come from there.
+    /// Left out of the JSON when unset, so models of other tables don't change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition_of: Option<PartitionOf>,
+}
+
+/// Where a partition belongs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartitionOf {
+    pub schema: String,
+    pub table: String,
+    /// `FOR VALUES ...` or `DEFAULT`, as PostgreSQL writes it.
+    pub bound: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

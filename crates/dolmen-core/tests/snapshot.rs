@@ -35,6 +35,7 @@ fn table(name: &str, columns: Vec<Column>) -> Table {
         constraints: vec![],
         indexes: vec![],
         partition_key: None,
+        partition_of: None,
         comment: None,
     }
 }

@@ -75,6 +75,8 @@ export interface Table {
   /** The PARTITION BY clause of a partitioned table, e.g. "RANGE (created_at)". */
   partitionKey: string | null;
   comment: string | null;
+  /** For a partition: the table it belongs to and its bounds. Its columns come from there. */
+  partitionOf?: { schema: string; table: string; bound: string } | null;
 }
 
 export interface View {

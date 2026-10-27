@@ -305,6 +305,7 @@ mod tests {
                     }],
                     indexes: vec![],
                     partition_key: None,
+                    partition_of: None,
                     comment: None,
                 }],
                 views: vec![],

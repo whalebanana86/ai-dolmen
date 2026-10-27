@@ -126,6 +126,11 @@ export function DetailPanel(props: Props) {
               <TableDetail
                 schema={found.schema}
                 table={found.table}
+                partitions={introspection.database.schemas.flatMap((s) =>
+                  s.tables
+                    .filter((t) => t.partitionOf?.schema === found.schema && t.partitionOf.table === found.table.name)
+                    .map((t) => ({ schema: s.name, table: t })),
+                )}
                 foreignKeys={introspection.foreignKeys}
                 onNavigate={props.onNavigate}
               />
@@ -311,11 +316,14 @@ function Comment({ text }: { text: string | null }) {
 function TableDetail({
   schema,
   table,
+  partitions,
   foreignKeys,
   onNavigate,
 }: {
   schema: string;
   table: Table;
+  /** The table's own partitions, for a partitioned table. */
+  partitions: { schema: string; table: Table }[];
   foreignKeys: ForeignKey[];
   onNavigate: (target: ObjectRef) => void;
 }) {
@@ -335,10 +343,27 @@ function TableDetail({
   return (
     <>
       <Comment text={table.comment} />
+      {table.partitionOf && (
+        <p className="muted">
+          {t.detail.partitionOf}: {link(table.partitionOf.schema, table.partitionOf.table)}{" "}
+          <code>{table.partitionOf.bound}</code>
+        </p>
+      )}
       {table.partitionKey && (
         <p className="muted">
           {t.detail.partitionKey}: <code>{table.partitionKey}</code>
         </p>
+      )}
+      {partitions.length > 0 && (
+        <Section title={`${t.detail.partitions} (${partitions.length})`}>
+          <ul className="relationships">
+            {partitions.map((p) => (
+              <li key={`${p.schema}.${p.table.name}`}>
+                {link(p.schema, p.table.name)} <code>{p.table.partitionOf?.bound}</code>
+              </li>
+            ))}
+          </ul>
+        </Section>
       )}
 
       <Section title={`${t.detail.columns} (${table.columns.length})`}>
