@@ -293,6 +293,8 @@ button.danger {
   flex: 1;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Schema tree */
@@ -414,8 +416,11 @@ button.danger {
   flex: 1;
 }
 
+/* The editor, the AI panel and the results share the height. When it runs
+   short, the editor and the AI panel give way, so the results keep enough
+   room to scroll. */
 .editor {
-  flex-shrink: 0;
+  flex: 0 1 auto;
   min-height: 80px;
   overflow: hidden;
 }
@@ -427,12 +432,12 @@ button.danger {
 
 /* With the results hidden, the editor takes their place. */
 .editor.fill {
-  flex: 1;
+  flex: 1 1 0;
 }
 
 .results {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: 120px;
   overflow: auto;
   padding: 12px;
 }
@@ -1116,8 +1121,9 @@ button.primary.danger-fill {
 
 .ai-panel {
   display: flex;
-  flex-shrink: 0;
+  flex: 0 1 auto;
   flex-direction: column;
+  min-height: 52px;
   max-height: 45vh;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
@@ -1125,6 +1131,7 @@ button.primary.danger-fill {
 
 .ai-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
@@ -1163,6 +1170,7 @@ button.primary.danger-fill {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
   overflow: auto;
   padding: 0 12px 12px;
 }
