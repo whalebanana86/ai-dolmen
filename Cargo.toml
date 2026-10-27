@@ -13,6 +13,12 @@ repository = "https://github.com/whalebanana86/ai-dolmen"
 dolmen-core = { path = "crates/dolmen-core" }
 clap = { version = "4", features = ["derive", "env"] }
 
+# No debug info in development builds: panics still name their file and line.
+# With it, macOS keeps every object file of every rebuild in target/debug/deps
+# for the debugger, which grew to tens of gigabytes.
+[profile.dev]
+debug = false
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1

@@ -13,7 +13,10 @@ publish = false
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "dolmen_app_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# The desktop app only links the Rust library. Mobile builds would need
+# "staticlib" (iOS) and "cdylib" (Android) back; each makes a copy of every
+# dependency, about 450 MB per debug build.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
