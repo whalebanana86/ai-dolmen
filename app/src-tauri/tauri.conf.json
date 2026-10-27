@@ -45,8 +45,8 @@
     "licenseFile": "../../LICENSE",
     "homepage": "https://github.com/whalebanana86/ai-dolmen",
     "category": "DeveloperTool",
-    "shortDescription": "An AI-native database client with schema version control",
-    "longDescription": "Dolmen is an open-source database client for PostgreSQL: a SQL editor with tabs and history, table details, relationships and ERD, query plans, schema snapshots versioned in Git, protection for production databases, and AI that writes, explains and fixes SQL with your own Anthropic API key.",
+    "shortDescription": "A database client with schema version control",
+    "longDescription": "Dolmen is an open-source database client for PostgreSQL: a SQL editor with tabs and history, table details, relationships and ERD, query plans, schema snapshots versioned in Git, data import and export, and protection for production databases.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

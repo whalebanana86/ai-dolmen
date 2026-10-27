@@ -14,7 +14,8 @@ interface Props {
   introspection: Introspection | null;
   onRun: () => void;
   /** ⌘K: ask AI. */
-  onAsk: () => void;
+  /** ⌘K; without it, the editor keeps the key. */
+  onAsk?: () => void;
   /** Shows the plan of the statement at the cursor; measured, with ANALYZE. */
   onExplain: (analyze: boolean) => void;
   onChange: (value: string) => void;
@@ -68,6 +69,7 @@ export function SqlEditor({
               {
                 key: "Mod-k",
                 run: () => {
+                  if (!handlers.current.onAsk) return false;
                   handlers.current.onAsk();
                   return true;
                 },

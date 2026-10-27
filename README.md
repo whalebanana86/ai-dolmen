@@ -145,6 +145,9 @@ a statement that changes data, the plan asks before measuring.
 
 ## AI
 
+AI is left out of releases for now. To try it, start a development build with
+`VITE_DOLMEN_AI=1 pnpm tauri dev` in `app`.
+
 Press **AI** (⌘K) in the editor to ask Claude to write SQL for a request in
 plain language, or to explain the selected SQL. When a statement fails, **Fix
 with AI** proposes a corrected one that can replace it. Requests carry the

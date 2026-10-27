@@ -23,6 +23,7 @@ import {
   sqlText,
 } from "./api";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
+import { AI_ENABLED } from "./features";
 import { EnvironmentBadge } from "./ConnectionForm";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
@@ -780,9 +781,11 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         <button onClick={() => explain(false)} disabled={!hasText || running} title={t.plan.buttonTitle}>
           {t.plan.button}
         </button>
-        <button onClick={() => setAiPrompting(true)} title={t.ai.buttonTitle}>
-          {t.ai.button}
-        </button>
+        {AI_ENABLED && (
+          <button onClick={() => setAiPrompting(true)} title={t.ai.buttonTitle}>
+            {t.ai.button}
+          </button>
+        )}
         <button onClick={() => setHistoryOpen(true)} title={t.history.buttonTitle}>
           {t.history.button}
         </button>
@@ -869,7 +872,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                 initialValue={tab.initialSql}
                 introspection={introspection}
                 onRun={run}
-                onAsk={() => setAiPrompting(true)}
+                onAsk={AI_ENABLED ? () => setAiPrompting(true) : undefined}
                 onExplain={explain}
                 onChange={(value) => editorChanged(tab.id, value)}
                 viewRef={editorRef(tab.id)}
@@ -891,7 +894,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             />
           )}
 
-          {(aiPrompting || conversation) && (
+          {AI_ENABLED && (aiPrompting || conversation) && (
             <AiPanel
               conversation={conversation}
               prompting={aiPrompting}
@@ -914,7 +917,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                   outcome={outcome}
                   onReveal={revealStatement}
                   onExport={exportResult}
-                  onFix={fixWithAi}
+                  onFix={AI_ENABLED ? fixWithAi : undefined}
                 />
               )}
               {!running && active?.plan?.output && (
@@ -932,7 +935,11 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                 <ErrorView
                   {...active.plan.failure}
                   statement={active.plan.statement}
-                  onFix={() => fixWithAi({ ...active.plan!.failure!, statement: active.plan!.statement })}
+                  onFix={
+                    AI_ENABLED
+                      ? () => fixWithAi({ ...active.plan!.failure!, statement: active.plan!.statement })
+                      : undefined
+                  }
                   onReveal={() => revealStatement(active.plan!.statement)}
                 />
               )}
@@ -1181,7 +1188,7 @@ function RunResults({
   outcome: Outcome;
   onReveal: (statement: FixTarget) => void;
   onExport: (statement: string) => void;
-  onFix: (failure: NonNullable<Outcome["failure"]>) => void;
+  onFix?: (failure: NonNullable<Outcome["failure"]>) => void;
 }) {
   const t = useT();
   const { results, failure } = outcome;
@@ -1240,7 +1247,11 @@ function RunResults({
         />
       ) : (
         failure && (
-          <ErrorView {...failure} onFix={() => onFix(failure)} onReveal={() => onReveal(failure.statement)} />
+          <ErrorView
+            {...failure}
+            onFix={onFix && (() => onFix(failure))}
+            onReveal={() => onReveal(failure.statement)}
+          />
         )
       )}
     </>
@@ -1257,7 +1268,8 @@ function ErrorView({
   error: unknown;
   location: Location | null;
   statement: FixTarget;
-  onFix: () => void;
+  /** Offers to fix the statement with AI. */
+  onFix?: () => void;
   onReveal: () => void;
 }) {
   const t = useT();
@@ -1285,7 +1297,7 @@ function ErrorView({
       {db?.code === "25006" && <p>{t.workspace.readOnlyHint}</p>}
       {/* Only the server's errors are about the SQL; connection problems,
           cancelling and the read-only lock aren't. */}
-      {db && db.code !== "57014" && db.code !== "25006" && (
+      {onFix && db && db.code !== "57014" && db.code !== "25006" && (
         <div className="actions">
           <button onClick={onFix}>{t.ai.fix}</button>
         </div>

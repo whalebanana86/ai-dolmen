@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { AI_MODELS, AiModel, AvailableUpdate, ai, appVersion, errorMessage, history, updates } from "./api";
+import { AI_ENABLED } from "./features";
 import { LOCALES, Locale, Theme, useSettings, useT } from "./settings";
 
 const THEMES: Theme[] = ["system", "light", "dark"];
 
-/** App settings: language, theme and AI. Changes apply right away. */
+/** App settings: language, theme, history, AI and updates. Changes apply right away. */
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
   const { settings, update } = useSettings();
@@ -45,7 +46,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             ))}
           </fieldset>
           <HistorySettings />
-          <AiSettings />
+          {AI_ENABLED && <AiSettings />}
           <UpdateSettings />
         </div>
       </div>
