@@ -257,7 +257,8 @@ export const en = {
     allSchemas: "All schemas",
     onlyRelated: (table: string) => `Only ${table} and its neighbors`,
     empty: "This schema has no tables.",
-    help: "Drag to move tables, scroll to zoom. Double-click a table for its details.",
+    help: "Drag to move tables, scroll to zoom. Click a table to pick out its relationships; double-click for its details.",
+    legend: "Lines into",
   },
 
   snapshot: {

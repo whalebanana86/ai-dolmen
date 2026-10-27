@@ -1620,9 +1620,109 @@ button.link:hover {
   --xy-edge-label-color: var(--muted);
 }
 
-.erd-canvas .react-flow__edge.highlighted .react-flow__edge-path {
-  stroke: var(--accent);
+/* Lines take their referenced table's color: eight categorical hues, checked
+   for color-vision deficiencies against these surfaces, stepped per theme. */
+:root {
+  --erd-1: #2a78d6;
+  --erd-2: #eb6834;
+  --erd-3: #1baf7a;
+  --erd-4: #eda100;
+  --erd-5: #e87ba4;
+  --erd-6: #008300;
+  --erd-7: #6250d6;
+  --erd-8: #e34948;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --erd-1: #3987e5;
+    --erd-2: #d95926;
+    --erd-3: #199e70;
+    --erd-4: #c98500;
+    --erd-5: #d55181;
+    --erd-6: #008300;
+    --erd-7: #9085e9;
+    --erd-8: #e66767;
+  }
+}
+
+:root[data-theme="dark"] {
+  --erd-1: #3987e5;
+  --erd-2: #d95926;
+  --erd-3: #199e70;
+  --erd-4: #c98500;
+  --erd-5: #d55181;
+  --erd-6: #008300;
+  --erd-7: #9085e9;
+  --erd-8: #e66767;
+}
+
+.erd-canvas .react-flow__edge-path {
   stroke-width: 2;
+}
+
+.erd-canvas .react-flow__edge:hover .react-flow__edge-path,
+.erd-canvas .react-flow__edge.highlighted .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+.erd-canvas .react-flow__edge.dimmed,
+.erd-canvas .react-flow__node.dimmed {
+  opacity: 0.25;
+}
+
+.erd-edge-label {
+  position: absolute;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.erd-legend {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  max-height: 60%;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.erd-legend p {
+  margin: 0 0 4px;
+  font-size: 11px;
+}
+
+.erd-legend button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  font-family: var(--mono);
+  text-align: left;
+}
+
+.erd-legend button:hover,
+.erd-legend button.selected {
+  background: var(--active-line);
+}
+
+.erd-swatch {
+  width: 16px;
+  height: 3px;
+  flex-shrink: 0;
+  border-radius: 2px;
 }
 
 .erd-canvas .react-flow__node-table {
