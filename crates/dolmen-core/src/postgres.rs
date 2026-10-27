@@ -13,9 +13,10 @@ use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::Error;
-use crate::schema::Database;
+use crate::schema::{Database, ForeignKey};
 
 pub mod ddl;
+pub mod edit;
 mod introspect;
 pub mod migrate;
 
@@ -273,8 +274,10 @@ impl Session {
         Ok(results)
     }
 
-    /// Reads the structure of the database: schemas, tables, views, functions and types.
-    pub async fn introspect(&self) -> Result<Database, Error> {
+    /// The connection for reading and changing structure, opened on first use
+    /// with `search_path=pg_catalog` (as pg_dump does), so definitions come back
+    /// schema-qualified whatever the user's session has set.
+    async fn metadata(&self) -> Result<tokio::sync::MutexGuard<'_, Option<Client>>, Error> {
         let mut metadata = self.metadata.lock().await;
         if metadata.as_ref().is_none_or(Client::is_closed) {
             *metadata = Some(
@@ -283,7 +286,19 @@ impl Session {
                     .0,
             );
         }
-        let client = metadata.as_mut().expect("opened above");
+        Ok(metadata)
+    }
+
+    /// Every foreign key between the database's tables, for showing relationships.
+    pub async fn foreign_keys(&self) -> Result<Vec<ForeignKey>, Error> {
+        let metadata = self.metadata().await?;
+        introspect::foreign_keys(metadata.as_ref().expect("opened by metadata()")).await
+    }
+
+    /// Reads the structure of the database: schemas, tables, views, functions and types.
+    pub async fn introspect(&self) -> Result<Database, Error> {
+        let mut metadata = self.metadata().await?;
+        let client = metadata.as_mut().expect("opened by metadata()");
 
         // One read-only snapshot makes all catalog queries agree. DDL running at
         // the same time can still drop an object between reading the catalogs and
@@ -338,15 +353,8 @@ impl Session {
     /// Function bodies aren't checked while creating them, as in a pg_dump
     /// restore, since they may read tables created later in the plan.
     pub async fn apply(&self, plan: &migrate::Plan) -> Result<(), Error> {
-        let mut metadata = self.metadata.lock().await;
-        if metadata.as_ref().is_none_or(Client::is_closed) {
-            *metadata = Some(
-                open(&self.config, Some("-c search_path=pg_catalog"))
-                    .await?
-                    .0,
-            );
-        }
-        let client = metadata.as_mut().expect("opened above");
+        let mut metadata = self.metadata().await?;
+        let client = metadata.as_mut().expect("opened by metadata()");
         let transaction = client.transaction().await?;
         transaction
             .batch_execute(

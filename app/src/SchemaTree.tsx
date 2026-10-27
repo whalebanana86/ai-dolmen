@@ -4,6 +4,7 @@ import {
   Constraint,
   Index,
   Introspection,
+  ObjectRef,
   Schema,
   SchemaObject,
   SqlFunction,
@@ -21,6 +22,10 @@ export interface TreeActions {
   insert: (sql: string, run: boolean) => void;
   /** Adds the object's CREATE statement to the editor. */
   showDdl: (schema: string, object: SchemaObject) => void;
+  /** Opens a table's, view's or function's details. */
+  showDetail: (target: ObjectRef) => void;
+  /** Opens the ERD of a schema, or of one table and its neighbors. */
+  showErd: (schema: string, table: string | null) => void;
   refresh: () => void;
 }
 
@@ -95,6 +100,8 @@ export function SchemaTree({ introspection, loading, actions, width }: Props) {
                 onToggle={() => toggle(key)}
                 onContextMenu={(e) =>
                   openMenu(e, [
+                    { label: t.tree.menu.showErd, onSelect: () => actions.showErd(schema.name, null) },
+                    { separator: true },
                     copyItem(t.tree.menu.copyName, schema.name),
                     { label: t.tree.menu.refresh, onSelect: actions.refresh },
                     { separator: true },
@@ -357,6 +364,14 @@ function relationMenu(
   const insertable = relation.columns.filter((c) => c.identity !== "always" && !c.generated);
 
   return [
+    {
+      label: t.tree.menu.showDetail,
+      onSelect: () => actions.showDetail({ type: isTable ? "table" : "view", schema, name: relation.name }),
+    },
+    ...(isTable
+      ? [{ label: t.tree.menu.showInErd, onSelect: () => actions.showErd(schema, relation.name) }]
+      : []),
+    { separator: true },
     { label: t.tree.menu.selectRows, onSelect: () => actions.insert(`SELECT * FROM ${name} LIMIT 1000;`, true) },
     { label: t.tree.menu.countRows, onSelect: () => actions.insert(`SELECT count(*) FROM ${name};`, true) },
     { separator: true },
@@ -385,14 +400,6 @@ function relationMenu(
           },
         ]
       : []),
-    {
-      label: t.tree.menu.showDdl,
-      onSelect: () =>
-        actions.showDdl(
-          schema,
-          "constraints" in relation ? { type: "table", ...relation } : { type: "view", ...relation },
-        ),
-    },
     { separator: true },
     copyItem(t.tree.menu.copyName, relation.name),
     copyItem(t.tree.menu.copyQualifiedName, sql.qualified(schema, relation.name)),
@@ -413,7 +420,10 @@ function relationMenu(
 function functionMenu(schema: string, fn: SqlFunction, actions: TreeActions, sql: SqlFor, t: Messages): MenuItem[] {
   const signature = `${sql.name(schema, fn.name)}(${fn.arguments})`;
   return [
-    { label: t.tree.menu.showDefinition, onSelect: () => actions.insert(`${fn.definition.trimEnd()};`, false) },
+    {
+      label: t.tree.menu.showDetail,
+      onSelect: () => actions.showDetail({ type: "function", schema, name: fn.name, arguments: fn.arguments }),
+    },
     { separator: true },
     copyItem(t.tree.menu.copyName, fn.name),
     copyItem(t.tree.menu.copySignature, signature),

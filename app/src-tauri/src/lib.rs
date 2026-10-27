@@ -40,6 +40,8 @@ pub fn run() {
             pg::pg_introspect,
             pg::pg_cancel,
             pg::pg_disconnect,
+            pg::object_plan,
+            pg::object_apply,
             snapshot::snapshot_checkout,
             snapshot::snapshot_ssh_alternatives,
             snapshot::snapshot_create_branch,

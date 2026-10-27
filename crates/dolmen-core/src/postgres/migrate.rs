@@ -110,7 +110,31 @@ pub enum Rename {
 /// The steps that change `current` into `target`, treating `renames` as
 /// renames rather than drops and adds.
 pub fn plan(current: &Database, target: &Database, renames: &[Rename]) -> Plan {
-    let mut planner = Planner::default();
+    plan_with(Planner::default(), current, target, renames)
+}
+
+/// Like [`plan`], for changes made to the live database's own model, whose
+/// views still read the old names: views are left to PostgreSQL, which follows
+/// renames by itself and refuses to drop or retype a column a view uses,
+/// instead of being recreated from definitions that name what was renamed.
+pub(crate) fn plan_keeping_views(
+    current: &Database,
+    target: &Database,
+    renames: &[Rename],
+) -> Plan {
+    let planner = Planner {
+        keep_views: true,
+        ..Planner::default()
+    };
+    plan_with(planner, current, target, renames)
+}
+
+fn plan_with(
+    mut planner: Planner,
+    current: &Database,
+    target: &Database,
+    renames: &[Rename],
+) -> Plan {
     let mut current = current.clone();
     for rename in renames {
         planner.rename(&mut current, target, rename);
@@ -153,6 +177,8 @@ struct Planner {
     /// Set by changes that can break views on the table: dropped tables and
     /// columns, type changes and renames. Views are then all recreated.
     reshaped: bool,
+    /// Leave views alone unless their own definition changed; see [`plan_keeping_views`].
+    keep_views: bool,
 }
 
 impl Planner {
@@ -706,7 +732,7 @@ impl Planner {
         let mut create = Vec::new();
         for (key, view) in &current_views {
             match target_views.get(key) {
-                Some(new) if !self.reshaped && same_view(view, new) => {
+                Some(new) if (self.keep_views || !self.reshaped) && same_view(view, new) => {
                     if view.comment != new.comment {
                         let object = if new.materialized {
                             "MATERIALIZED VIEW"

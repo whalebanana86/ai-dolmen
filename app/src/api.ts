@@ -114,7 +114,43 @@ export interface Introspection {
   /** The schema unqualified names resolve to first, usually "public". */
   defaultSchema: string | null;
   database: Database;
+  /** The relationships between tables. */
+  foreignKeys: ForeignKey[];
 }
+
+/** A foreign key with its columns spelled out, in key order. */
+export interface ForeignKey {
+  name: string;
+  schema: string;
+  table: string;
+  columns: string[];
+  referencedSchema: string;
+  referencedTable: string;
+  referencedColumns: string[];
+  /** "NO ACTION", "RESTRICT", "CASCADE", "SET NULL" or "SET DEFAULT". */
+  onUpdate: string;
+  onDelete: string;
+}
+
+/** A table, view or function, as the detail view and the ERD name it. */
+export type ObjectRef =
+  | { type: "table"; schema: string; name: string }
+  | { type: "view"; schema: string; name: string }
+  | { type: "function"; schema: string; name: string; arguments: string };
+
+/** A change made in the detail view; the backend plans the statements. */
+export type ObjectEdit =
+  | {
+      kind: "table";
+      schema: string;
+      /** The table's current name; `table.name` may be a new one. */
+      name: string;
+      table: Table;
+      /** [old name, new name] of renamed columns, which keep their data. */
+      renamedColumns: [string, string][];
+    }
+  | { kind: "view"; schema: string; name: string; view: View }
+  | { kind: "function"; schema: string; name: string; arguments: string; definition: string };
 
 export type AppError =
   | {
@@ -347,6 +383,14 @@ export const snapshots = {
   /** The CREATE statement for one object, as written in snapshots. */
   createStatement: (schema: string, object: SchemaObject) =>
     invoke<string>("ddl_create_statement", { schema, object }),
+};
+
+export const objects = {
+  /** The statements that make the object match `edit`, to review. */
+  plan: (sessionId: number, edit: ObjectEdit) => invoke<Plan>("object_plan", { sessionId, edit }),
+  /** Applies the reviewed statements in one transaction; refused if the plan changed since. */
+  apply: (sessionId: number, edit: ObjectEdit, reviewed: string[], allowDestructive: boolean) =>
+    invoke<void>("object_apply", { sessionId, edit, reviewed, allowDestructive }),
 };
 
 export const ai = {

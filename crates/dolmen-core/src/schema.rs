@@ -96,6 +96,24 @@ pub enum ConstraintKind {
     Exclusion,
 }
 
+/// A foreign key with its columns spelled out, for showing relationships.
+/// It is read alongside the model rather than kept in it: the model's
+/// [`Constraint`] already holds the definition snapshots and plans use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignKey {
+    pub name: String,
+    pub schema: String,
+    pub table: String,
+    pub columns: Vec<String>,
+    pub referenced_schema: String,
+    pub referenced_table: String,
+    pub referenced_columns: Vec<String>,
+    /// `NO ACTION`, `RESTRICT`, `CASCADE`, `SET NULL` or `SET DEFAULT`.
+    pub on_update: String,
+    pub on_delete: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Index {
     pub name: String,

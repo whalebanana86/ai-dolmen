@@ -191,7 +191,7 @@ function renameLabel(rename: Rename, t: Messages) {
     : t.apply.renameColumn(`${rename.schema}.${rename.table}.${rename.from}`, rename.to);
 }
 
-function blockerText(blocker: Blocker, t: Messages) {
+export function blockerText(blocker: Blocker, t: Messages) {
   switch (blocker.kind) {
     case "enumValuesRemoved":
       return t.apply.blockers.enumValuesRemoved(blocker.name);

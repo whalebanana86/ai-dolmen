@@ -282,3 +282,47 @@ fn ai_tasks_answers_and_errors_match_the_app() {
         );
     }
 }
+
+#[test]
+fn foreign_keys_and_edits_match_the_app() {
+    use dolmen_core::postgres::edit::Edit;
+    use dolmen_core::schema::ForeignKey;
+
+    assert_eq!(
+        serde_json::to_value(ForeignKey {
+            name: "order_user_id_fkey".into(),
+            schema: "public".into(),
+            table: "order".into(),
+            columns: vec!["user_id".into()],
+            referenced_schema: "public".into(),
+            referenced_table: "users".into(),
+            referenced_columns: vec!["id".into()],
+            on_update: "NO ACTION".into(),
+            on_delete: "CASCADE".into(),
+        })
+        .unwrap(),
+        json!({
+            "name": "order_user_id_fkey", "schema": "public", "table": "order",
+            "columns": ["user_id"], "referencedSchema": "public", "referencedTable": "users",
+            "referencedColumns": ["id"], "onUpdate": "NO ACTION", "onDelete": "CASCADE",
+        })
+    );
+    let edit: Edit = serde_json::from_value(json!({
+        "kind": "table", "schema": "public", "name": "users",
+        "table": {
+            "name": "people", "kind": "table", "columns": [], "constraints": [], "indexes": [],
+            "partitionKey": null, "comment": null,
+        },
+        "renamedColumns": [["name", "full_name"]],
+    }))
+    .unwrap();
+    assert!(
+        matches!(edit, Edit::Table { renamed_columns, .. } if renamed_columns == [("name".to_owned(), "full_name".to_owned())])
+    );
+    let edit: Edit = serde_json::from_value(json!({
+        "kind": "function", "schema": "public", "name": "add", "arguments": "a integer",
+        "definition": "CREATE OR REPLACE FUNCTION public.add(a integer) …",
+    }))
+    .unwrap();
+    assert!(matches!(edit, Edit::Function { .. }));
+}

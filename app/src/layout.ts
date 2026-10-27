@@ -10,6 +10,8 @@ export interface Layout {
   editorHeight: number;
   /** Snapshot panel width, in px. */
   snapshotWidth: number;
+  /** Detail panel width, in px. */
+  detailWidth: number;
 }
 
 const STORAGE_KEY = "dolmen.layout";
@@ -21,6 +23,7 @@ export function defaultLayout(): Layout {
     resultsVisible: true,
     editorHeight: Math.round(window.innerHeight * 0.35),
     snapshotWidth: 640,
+    detailWidth: 760,
   };
 }
 
@@ -53,6 +56,7 @@ function load(): Layout {
       resultsVisible: pick("resultsVisible"),
       editorHeight: pick("editorHeight"),
       snapshotWidth: pick("snapshotWidth"),
+      detailWidth: pick("detailWidth"),
     };
   } catch {
     return defaults;

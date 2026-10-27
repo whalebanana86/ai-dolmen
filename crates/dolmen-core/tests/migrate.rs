@@ -195,3 +195,179 @@ fn only_local_servers_count_as_local() {
         assert!(!config(host).is_local(), "{host}");
     }
 }
+
+#[tokio::test]
+async fn reads_foreign_keys_with_their_columns_in_order() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let _exclusive = exclusive().await;
+    run(
+        &session,
+        "DROP SCHEMA IF EXISTS fk_test CASCADE; DROP SCHEMA IF EXISTS fk_other CASCADE;
+         CREATE SCHEMA fk_test; CREATE SCHEMA fk_other;
+         CREATE TABLE fk_other.regions (code text PRIMARY KEY);
+         CREATE TABLE fk_test.customers (id int, region text, PRIMARY KEY (region, id));
+         CREATE TABLE fk_test.orders (
+           \"Order Id\" int PRIMARY KEY,
+           customer int, region text REFERENCES fk_other.regions ON UPDATE CASCADE,
+           CONSTRAINT orders_customer_fkey FOREIGN KEY (region, customer)
+             REFERENCES fk_test.customers (region, id) ON DELETE SET NULL
+         );",
+    )
+    .await;
+    let keys: Vec<_> = session
+        .foreign_keys()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|k| k.schema == "fk_test")
+        .collect();
+    let summary: Vec<_> = keys
+        .iter()
+        .map(|k| {
+            (
+                k.name.as_str(),
+                k.columns.join(","),
+                format!("{}.{}", k.referenced_schema, k.referenced_table),
+                k.referenced_columns.join(","),
+                k.on_update.as_str(),
+                k.on_delete.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (
+                "orders_customer_fkey",
+                "region,customer".to_owned(),
+                "fk_test.customers".to_owned(),
+                "region,id".to_owned(),
+                "NO ACTION",
+                "SET NULL"
+            ),
+            (
+                "orders_region_fkey",
+                "region".to_owned(),
+                "fk_other.regions".to_owned(),
+                "code".to_owned(),
+                "CASCADE",
+                "NO ACTION"
+            ),
+        ]
+    );
+    run(
+        &session,
+        "DROP SCHEMA fk_test CASCADE; DROP SCHEMA fk_other CASCADE",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn applies_edits_from_the_detail_view() {
+    use dolmen_core::postgres::edit::{self, Edit};
+
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let _exclusive = exclusive().await;
+    run(
+        &session,
+        "DROP SCHEMA IF EXISTS edit_test CASCADE;
+         CREATE SCHEMA edit_test;
+         CREATE TABLE edit_test.users (id int PRIMARY KEY, name text);
+         INSERT INTO edit_test.users VALUES (1, 'kim');
+         CREATE VIEW edit_test.names AS SELECT name FROM edit_test.users;
+         CREATE FUNCTION edit_test.twice(n int) RETURNS int LANGUAGE sql AS 'SELECT n * 2';",
+    )
+    .await;
+    let model = |database: Database| {
+        let mut database = database;
+        database.schemas.retain(|s| s.name == "edit_test");
+        database
+    };
+    let current = session.introspect().await.unwrap();
+    let schema = &model(current.clone()).schemas[0];
+
+    // Rename the table and a column, add a column: the row and the view survive.
+    let mut table = schema.tables[0].clone();
+    table.name = "people".into();
+    table.columns[1].name = "full_name".into();
+    let mut email = table.columns[1].clone();
+    email.name = "email".into();
+    email.comment = Some("where receipts go".into());
+    table.columns.push(email);
+    let plan = edit::plan(
+        &current,
+        &Edit::Table {
+            schema: "edit_test".into(),
+            name: "users".into(),
+            table,
+            renamed_columns: vec![("name".into(), "full_name".into())],
+        },
+    )
+    .unwrap();
+    apply(&session, &plan).await;
+    let after = model(session.introspect().await.unwrap());
+    let people = &after.schemas[0].tables[0];
+    assert_eq!(people.name, "people");
+    let columns: Vec<_> = people.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(columns, ["id", "full_name", "email"]);
+    assert_eq!(
+        people.columns[2].comment.as_deref(),
+        Some("where receipts go")
+    );
+    assert!(
+        after.schemas[0].views[0]
+            .definition
+            .contains("edit_test.people"),
+        "{}",
+        after.schemas[0].views[0].definition
+    );
+
+    // A new view definition and a new function body.
+    let current = session.introspect().await.unwrap();
+    let mut view = model(current.clone()).schemas[0].views[0].clone();
+    view.definition = "SELECT upper(full_name) AS name FROM edit_test.people".into();
+    apply(
+        &session,
+        &edit::plan(
+            &current,
+            &Edit::View {
+                schema: "edit_test".into(),
+                name: "names".into(),
+                view,
+            },
+        )
+        .unwrap(),
+    )
+    .await;
+    let current = session.introspect().await.unwrap();
+    let function = model(current.clone()).schemas[0].functions[0].clone();
+    apply(
+        &session,
+        &edit::plan(
+            &current,
+            &Edit::Function {
+                schema: "edit_test".into(),
+                name: function.name.clone(),
+                arguments: function.arguments.clone(),
+                definition: function.definition.replace("n * 2", "n * 3"),
+            },
+        )
+        .unwrap(),
+    )
+    .await;
+    let rows = session
+        .execute(
+            "SELECT name, edit_test.twice(2)::text FROM edit_test.names",
+            10,
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(&rows[0], dolmen_core::postgres::StatementResult::Rows { rows, .. }
+            if rows[0][0].as_deref() == Some("KIM") && rows[0][1].as_deref() == Some("6")),
+        "{rows:?}"
+    );
+    run(&session, "DROP SCHEMA edit_test CASCADE").await;
+}

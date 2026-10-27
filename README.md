@@ -60,6 +60,19 @@ on errors. `--url` falls back to `DATABASE_URL`, and the password to `PGPASSWORD
     DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```
 
+## Details, relationships and ERD
+
+Right-click a table, view or function and choose **Show details** for its
+columns, keys, constraints, indexes and DDL. A table's details list the tables
+it references and the ones that reference it, with their ON DELETE and ON
+UPDATE rules. **ERD** draws a schema's tables and foreign keys as a diagram,
+or one table with its neighbors.
+
+**Edit** in the details changes a table (name, columns, constraints, indexes,
+comments), a view's query or a function's definition. Dolmen shows the
+statements first; they run in one transaction, steps that can lose data need
+your consent, and they can go into the editor instead.
+
 ## AI
 
 Press **AI** (⌘K) in the editor to ask Claude to write SQL for a request in

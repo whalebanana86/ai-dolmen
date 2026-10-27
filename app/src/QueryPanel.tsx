@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import {
   Introspection,
+  ObjectRef,
   SavedConnection,
   SnapshotRemote,
   SchemaObject,
@@ -18,6 +19,7 @@ import {
   sqlText,
 } from "./api";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
+import { DetailPanel } from "./DetailPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
 import { ResultView } from "./ResultView";
@@ -29,6 +31,9 @@ import type { Messages } from "./i18n/en";
 import { useT } from "./settings";
 
 const INITIAL_SQL = "SELECT version();\n";
+
+// The ERD brings a diagram library, so it loads when first opened.
+const ErdView = lazy(() => import("./ErdView").then((module) => ({ default: module.ErdView })));
 
 interface Location {
   line: number;
@@ -73,6 +78,8 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   const { conversation, ask, stop: stopAi, clear: clearAi } = useAi(session.id);
   const [aiPrompting, setAiPrompting] = useState(false);
   const { layout, update: updateLayout, toggle: togglePanel } = useLayout();
+  const [detail, setDetail] = useState<ObjectRef | null>(null);
+  const [erd, setErd] = useState<{ schema: string | null; focus: string | null } | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
 
   // ⌘B and ⌘J show and hide the schema tree and the results, as in VS Code.
@@ -339,6 +346,13 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         <button onClick={() => setAiPrompting(true)} title={t.ai.buttonTitle}>
           {t.ai.button}
         </button>
+        <button
+          onClick={() => setErd({ schema: introspection?.defaultSchema ?? null, focus: null })}
+          disabled={!introspection}
+          title={t.workspace.erdTitle}
+        >
+          {t.workspace.erd}
+        </button>
         <button onClick={() => setSnapshotOpen(true)} title={t.workspace.snapshotTitle}>
           {t.workspace.snapshot}
           {snapshotStatus && (
@@ -357,7 +371,13 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             <SchemaTree
               introspection={introspection}
               loading={loadingSchema}
-              actions={{ insert: insertStatement, refresh: refreshSchema, showDdl }}
+              actions={{
+                insert: insertStatement,
+                refresh: refreshSchema,
+                showDdl,
+                showDetail: setDetail,
+                showErd: (schema, focus) => setErd({ schema, focus }),
+              }}
               width={layout.treeWidth}
             />
             <Splitter
@@ -432,6 +452,42 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           )}
         </div>
       </div>
+      {erd && introspection && (
+        <Suspense fallback={null}>
+          <ErdView
+            introspection={introspection}
+            schema={erd.schema}
+            focus={erd.focus}
+            onOpenDetail={setDetail}
+            onClose={() => setErd(null)}
+          />
+        </Suspense>
+      )}
+      {detail && introspection && (
+        <DetailPanel
+          sessionId={session.id}
+          introspection={introspection}
+          target={detail}
+          onNavigate={setDetail}
+          onShowErd={(schema, table) => {
+            setDetail(null);
+            setErd({ schema, focus: table });
+          }}
+          onInsert={(sql) => {
+            setDetail(null);
+            insertStatement(sql, false);
+          }}
+          onChanged={(renamed) => {
+            refreshSchema();
+            refreshSnapshot();
+            if (renamed) setDetail(renamed);
+          }}
+          onClose={() => setDetail(null)}
+          width={layout.detailWidth}
+          onResize={(detailWidth) => updateLayout({ detailWidth })}
+          onResetWidth={() => updateLayout({ detailWidth: defaultLayout().detailWidth })}
+        />
+      )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {snapshotOpen && (
         <SnapshotPanel

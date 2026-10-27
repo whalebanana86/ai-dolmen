@@ -10,8 +10,8 @@ use tokio_postgres::GenericClient;
 
 use crate::Error;
 use crate::schema::{
-    Column, Constraint, ConstraintKind, Database, EnumType, Extension, Function, FunctionKind,
-    Generated, Identity, Index, Schema, Sequence, Table, TableKind, View,
+    Column, Constraint, ConstraintKind, Database, EnumType, Extension, ForeignKey, Function,
+    FunctionKind, Generated, Identity, Index, Schema, Sequence, Table, TableKind, View,
 };
 
 /// Matches user schemas through the alias `n` for `pg_namespace`.
@@ -24,6 +24,61 @@ fn not_from_extension(oid: &str) -> String {
         "NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dep \
          WHERE dep.objid = {oid} AND dep.deptype = 'e')"
     )
+}
+
+/// Every foreign key between user tables, ordered by table and name.
+pub(super) async fn foreign_keys(client: &impl GenericClient) -> Result<Vec<ForeignKey>, Error> {
+    // Column names in key order; conkey and confkey list attribute numbers.
+    let columns = |keys: &str, relation: &str| {
+        format!(
+            "ARRAY(SELECT a.attname::text FROM unnest(con.{keys}) WITH ORDINALITY k(attnum, i)
+                   JOIN pg_catalog.pg_attribute a ON a.attrelid = con.{relation} AND a.attnum = k.attnum
+                   ORDER BY k.i)"
+        )
+    };
+    let rows = client
+        .query(
+            &format!(
+                "SELECT con.conname::text, n.nspname::text, c.relname::text, {},
+                        rn.nspname::text, rc.relname::text, {},
+                        con.confupdtype::text, con.confdeltype::text
+                 FROM pg_catalog.pg_constraint con
+                 JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                 JOIN pg_catalog.pg_class rc ON rc.oid = con.confrelid
+                 JOIN pg_catalog.pg_namespace rn ON rn.oid = rc.relnamespace
+                 WHERE con.contype = 'f' AND {USER_SCHEMAS}
+                 ORDER BY n.nspname COLLATE \"C\", c.relname COLLATE \"C\", con.conname COLLATE \"C\"",
+                columns("conkey", "conrelid"),
+                columns("confkey", "confrelid"),
+            ),
+            &[],
+        )
+        .await?;
+    let action = |code: &str| {
+        match code {
+            "r" => "RESTRICT",
+            "c" => "CASCADE",
+            "n" => "SET NULL",
+            "d" => "SET DEFAULT",
+            _ => "NO ACTION",
+        }
+        .to_owned()
+    };
+    Ok(rows
+        .iter()
+        .map(|row| ForeignKey {
+            name: row.get(0),
+            schema: row.get(1),
+            table: row.get(2),
+            columns: row.get(3),
+            referenced_schema: row.get(4),
+            referenced_table: row.get(5),
+            referenced_columns: row.get(6),
+            on_update: action(row.get(7)),
+            on_delete: action(row.get(8)),
+        })
+        .collect())
 }
 
 enum Relation {
