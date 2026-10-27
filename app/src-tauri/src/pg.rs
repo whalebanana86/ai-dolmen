@@ -26,6 +26,8 @@ const MAX_ROWS: usize = 10_000;
 pub struct Sessions {
     next_id: AtomicU64,
     open: Mutex<HashMap<u64, Open>>,
+    /// The sessions explaining a statement for an open session, by its id, to cancel.
+    explaining: Mutex<HashMap<u64, Arc<Session>>>,
 }
 
 struct Open {
@@ -59,15 +61,17 @@ impl Sessions {
             .is_some_and(|open| open.apply_allowed)
     }
 
-    /// Refuses changes while the session is read-only.
-    pub(crate) fn check_writable(&self, id: u64) -> Result<(), Error> {
-        let read_only = self
-            .open
+    fn read_only(&self, id: u64) -> bool {
+        self.open
             .lock()
             .unwrap()
             .get(&id)
-            .is_some_and(|open| open.read_only);
-        if read_only {
+            .is_some_and(|open| open.read_only)
+    }
+
+    /// Refuses changes while the session is read-only.
+    pub(crate) fn check_writable(&self, id: u64) -> Result<(), Error> {
+        if self.read_only(id) {
             return Err(Error::Refused {
                 reason: Refusal::ReadOnly,
                 message: "The connection is read-only; allow writing from the toolbar first."
@@ -345,6 +349,48 @@ pub async fn pg_execute(
     result
 }
 
+/// The plan for `statement` as EXPLAIN's JSON; with `analyze`, measured by
+/// running it and rolling back. It runs on a session of its own with the same
+/// search path and read-only state, so the session's open transaction, if
+/// any, is left alone.
+#[tauri::command]
+pub async fn pg_explain(
+    session_id: u64,
+    statement: String,
+    analyze: bool,
+    sessions: State<'_, Sessions>,
+    history: State<'_, HistoryStore>,
+) -> Result<serde_json::Value, Error> {
+    let session = sessions.get(session_id)?;
+    let explainer = Arc::new(session.another().await?);
+    if sessions.read_only(session_id) {
+        explainer.set_read_only(true).await?;
+    }
+    explainer
+        .set_search_path(&session.search_path().await?)
+        .await?;
+    sessions
+        .explaining
+        .lock()
+        .unwrap()
+        .insert(session_id, Arc::clone(&explainer));
+    let started = Started::now();
+    let result = explainer.explain(&statement, analyze).await;
+    sessions.explaining.lock().unwrap().remove(&session_id);
+    if analyze && let Some(connection) = sessions.connection(session_id) {
+        // Only ANALYZE runs the statement; a plain EXPLAIN changes nothing worth keeping.
+        history.record(
+            &connection,
+            &format!("EXPLAIN ANALYZE {}", statement.trim()),
+            started,
+            &result,
+            |_| None,
+            Source::Editor,
+        );
+    }
+    result
+}
+
 /// The database structure, for the schema tree and completion.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -456,6 +502,15 @@ pub(crate) fn record_plan(
 
 #[tauri::command]
 pub async fn pg_cancel(session_id: u64, sessions: State<'_, Sessions>) -> Result<(), Error> {
+    let explainer = sessions
+        .explaining
+        .lock()
+        .unwrap()
+        .get(&session_id)
+        .cloned();
+    if let Some(explainer) = explainer {
+        explainer.cancel().await?;
+    }
     sessions.get(session_id)?.cancel().await
 }
 

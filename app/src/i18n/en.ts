@@ -472,6 +472,46 @@ export const en = {
     committedBy: (author: string, date: string) => `${author}, ${date}`,
   },
 
+  plan: {
+    title: "Query plan",
+    button: "Plan",
+    buttonTitle: "Shows how PostgreSQL runs the statement at the cursor (⌘E); ⌘⇧E measures it",
+    measured: "Measured (ANALYZE)",
+    estimated: "Estimated (EXPLAIN)",
+    planning: (ms: string) => `planning ${ms} ms`,
+    execution: (ms: string) => `execution ${ms} ms`,
+    measure: "Run and measure",
+    measureTitle: "Runs the statement to measure its time and rows (⌘⇧E)",
+    measureChanges: "Run, measure and roll back",
+    measureChangesTitle:
+      "This statement changes data. It runs in a transaction that is rolled back, but holds its locks and fires triggers meanwhile.",
+    copyJson: "Copy JSON",
+    copied: "Copied",
+    node: "Step",
+    rows: "Rows",
+    time: "Own time",
+    cost: "Own cost",
+    share: "Share",
+    actualOf: (actual: string, planned: string) => `${actual} of ${planned} expected`,
+    planned: (rows: string) => `${rows} expected`,
+    loops: (loops: number) => `×${loops.toLocaleString()} loops`,
+    neverRan: "never ran",
+    removed: (rows: number) => `Rows removed by filter: ${rows.toLocaleString()}`,
+    collapse: "Collapse",
+    expand: "Expand",
+    slowest: "slowest",
+    costliest: "costliest",
+    warnings: {
+      seqScan: (rows: number) =>
+        `Reads the whole table and throws away ${plural(rows, "row", "rows")}. An index on the condition may help.`,
+      misestimate: (planned: number, actual: number) =>
+        `Expected ${plural(Math.round(planned), "row", "rows")}, got ${Math.round(actual).toLocaleString()}. The statistics may be stale (ANALYZE the table).`,
+      diskSort: (kb: number) => `The sort didn't fit in memory and used ${kb.toLocaleString()} kB of disk (work_mem).`,
+      hashBatches: (batches: number) =>
+        `The hash table didn't fit in memory and was split into ${batches} batches (work_mem).`,
+    },
+  },
+
   environments: {
     development: "Development",
     staging: "Staging",

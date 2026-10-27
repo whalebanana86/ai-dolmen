@@ -15,6 +15,8 @@ interface Props {
   onRun: () => void;
   /** ⌘K: ask AI. */
   onAsk: () => void;
+  /** Shows the plan of the statement at the cursor; measured, with ANALYZE. */
+  onExplain: (analyze: boolean) => void;
   onChange: (value: string) => void;
   /** Set to the editor view, so the parent can read text and selection when running. */
   viewRef: { current: EditorView | null };
@@ -31,6 +33,7 @@ export function SqlEditor({
   introspection,
   onRun,
   onAsk,
+  onExplain,
   onChange,
   viewRef,
   height,
@@ -42,9 +45,9 @@ export function SqlEditor({
   const [language] = useState(() => new Compartment());
   const [phrases] = useState(() => new Compartment());
   // The view is created once, so it reads the latest callbacks through a ref.
-  const handlers = useRef({ onRun, onAsk, onChange });
+  const handlers = useRef({ onRun, onAsk, onExplain, onChange });
   useEffect(() => {
-    handlers.current = { onRun, onAsk, onChange };
+    handlers.current = { onRun, onAsk, onExplain, onChange };
   });
 
   useEffect(() => {
@@ -66,6 +69,20 @@ export function SqlEditor({
                 key: "Mod-k",
                 run: () => {
                   handlers.current.onAsk();
+                  return true;
+                },
+              },
+              {
+                key: "Mod-e",
+                run: () => {
+                  handlers.current.onExplain(false);
+                  return true;
+                },
+              },
+              {
+                key: "Mod-Shift-e",
+                run: () => {
+                  handlers.current.onExplain(true);
                   return true;
                 },
               },

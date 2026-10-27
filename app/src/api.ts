@@ -46,6 +46,24 @@ export interface RowEstimate {
   atLeast: boolean;
 }
 
+/** A step of a plan, as EXPLAIN (FORMAT JSON) gives it. */
+export interface PlanNode {
+  "Node Type": string;
+  Plans?: PlanNode[];
+  "Relation Name"?: string;
+  Schema?: string;
+  Alias?: string;
+  "Index Name"?: string;
+  "Join Type"?: string;
+  Strategy?: string;
+  "CTE Name"?: string;
+  "Function Name"?: string;
+  "Subplan Name"?: string;
+  [key: string]: unknown;
+}
+
+export type ExplainOutput = { Plan: PlanNode; "Planning Time"?: number; "Execution Time"?: number }[];
+
 export interface Assessment {
   risk: Risk;
   /** About how many rows it touches, when that can be told. */
@@ -293,6 +311,9 @@ export const pg = {
   currentSchema: (sessionId: number) => invoke<string | null>("pg_current_schema", { sessionId }),
   /** Makes the session and every tab's session of its connection read-only, or lets them write. */
   setReadOnly: (sessionId: number, readOnly: boolean) => invoke<void>("pg_set_read_only", { sessionId, readOnly }),
+  /** The statement's plan; with `analyze`, measured by running it and rolling back. */
+  explain: (sessionId: number, statement: string, analyze: boolean) =>
+    invoke<ExplainOutput>("pg_explain", { sessionId, statement, analyze }),
   /** What each statement could destroy, with about how many rows; null for a harmless one. */
   assess: (sessionId: number, statements: string[]) =>
     invoke<(Assessment | null)[]>("pg_assess", { sessionId, statements }),

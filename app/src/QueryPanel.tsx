@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import {
+  ExplainOutput,
   Introspection,
   ObjectRef,
   SavedConnection,
@@ -27,6 +28,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
 import { ResultView, StatementLine } from "./ResultView";
+import { PlanView } from "./PlanView";
 import { RiskDialog, RiskyStatement } from "./RiskDialog";
 import { SchemaTree } from "./SchemaTree";
 import { SettingsButton, SettingsDialog } from "./SettingsDialog";
@@ -58,6 +60,17 @@ interface Outcome {
   elapsedMs: number;
 }
 
+/** A statement's plan, shown in place of results. */
+interface Explained {
+  runId: number;
+  statement: FixTarget;
+  /** Measured by running it, rather than estimated. */
+  analyzed: boolean;
+  changesData: boolean;
+  output: ExplainOutput | null;
+  failure: { error: unknown; location: Location | null } | null;
+}
+
 /** An editor tab: a console with its own session, text and results. */
 interface SqlTab {
   id: number;
@@ -69,6 +82,7 @@ interface SqlTab {
   /** The text the tab started with. */
   initialSql: string;
   outcome: Outcome | null;
+  plan: Explained | null;
   running: boolean;
   hasText: boolean;
 }
@@ -155,6 +169,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             schema: tab.schema,
             initialSql: tab.sql,
             outcome: null,
+            plan: null,
             running: false,
             hasText: tab.sql.trim() !== "",
           }),
@@ -259,6 +274,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         schema,
         initialSql: "",
         outcome: null,
+        plan: null,
         running: false,
         hasText: false,
       },
@@ -294,6 +310,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       updateTab(id, () => ({ schema: now }));
     } catch (error) {
       updateTab(id, () => ({
+        plan: null,
         outcome: {
           runId: ++runCount.current,
           results: [],
@@ -511,7 +528,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       firstLine: lineAt(sql, ranges[0].start),
       elapsedMs: performance.now() - started,
     };
-    updateTab(tabId, () => ({ running: false, outcome: finished }));
+    updateTab(tabId, () => ({ running: false, outcome: finished, plan: null }));
     // The statements may have changed the search path.
     if (sessionId !== null) {
       pg.currentSchema(sessionId)
@@ -523,6 +540,49 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       refreshSchema();
       refreshSnapshot();
     }
+  }
+
+  /**
+   * Shows the plan of the statement at the cursor (the first one selected), or
+   * of `target` again. Measuring a statement that changes data waits for the
+   * plan's own button, which says it rolls back.
+   */
+  async function explain(analyze: boolean, target?: FixTarget) {
+    const view = viewRef.current;
+    const tabId = activeIdRef.current;
+    const tab = tabsRef.current?.find((t) => t.id === tabId);
+    if (!view || !tab || tab.running) return;
+    let statement = target;
+    if (!statement) {
+      const sql = view.state.doc.toString();
+      const { from, to } = view.state.selection.main;
+      const [range] = await statementsToRun(sql, from, to);
+      if (!range) return;
+      statement = { statement: sql.slice(range.start, range.end), start: range.start, end: range.end };
+    }
+    const changes = changesData(statement.statement);
+    const measure = analyze && (!changes || target !== undefined);
+    updateTab(tabId, () => ({ running: true }));
+    updateLayout({ resultsVisible: true });
+    let output: ExplainOutput | null = null;
+    let failure: Explained["failure"] = null;
+    try {
+      output = await pg.explain(await sessionOf(tabId), statement.statement, measure);
+    } catch (error) {
+      failure = {
+        error,
+        location: errorLocation(view.state.doc.toString(), statement.start, statement.statement, error),
+      };
+    }
+    const plan: Explained = {
+      runId: ++runCount.current,
+      statement,
+      analyzed: measure,
+      changesData: changes,
+      output,
+      failure,
+    };
+    updateTab(tabId, () => ({ running: false, outcome: null, plan }));
   }
 
   function showDdl(schema: string, object: SchemaObject) {
@@ -693,6 +753,9 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             {t.workspace.run}
           </button>
         )}
+        <button onClick={() => explain(false)} disabled={!hasText || running} title={t.plan.buttonTitle}>
+          {t.plan.button}
+        </button>
         <button onClick={() => setAiPrompting(true)} title={t.ai.buttonTitle}>
           {t.ai.button}
         </button>
@@ -773,6 +836,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                 introspection={introspection}
                 onRun={run}
                 onAsk={() => setAiPrompting(true)}
+                onExplain={explain}
                 onChange={(value) => editorChanged(tab.id, value)}
                 viewRef={editorRef(tab.id)}
                 height={layout.resultsVisible ? layout.editorHeight : null}
@@ -837,6 +901,25 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                     />
                   )}
                 </>
+              )}
+              {!running && active?.plan?.output && (
+                <PlanView
+                  key={active.plan.runId}
+                  output={active.plan.output}
+                  analyzed={active.plan.analyzed}
+                  statement={active.plan.statement.statement}
+                  changesData={active.plan.changesData}
+                  onMeasure={() => explain(true, active.plan!.statement)}
+                  onReveal={() => revealStatement(active.plan!.statement)}
+                />
+              )}
+              {!running && active?.plan?.failure && (
+                <ErrorView
+                  {...active.plan.failure}
+                  statement={active.plan.statement}
+                  onFix={() => fixWithAi({ ...active.plan!.failure!, statement: active.plan!.statement })}
+                  onReveal={() => revealStatement(active.plan!.statement)}
+                />
               )}
             </section>
           )}
@@ -1037,6 +1120,16 @@ function savedTabs(saved: string | null, t: Messages): SavedTabs {
     }
   }
   return { active: 0, tabs: [{ title: t.tabs.console(1), sql: saved ?? INITIAL_SQL, schema: null }] };
+}
+
+/** Whether running the statement may change data, judged by how it starts. */
+function changesData(statement: string) {
+  const text = statement.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, " ").trim();
+  const first = /^\(*\s*(\w+)/.exec(text)?.[1]?.toLowerCase() ?? "";
+  if (["select", "values", "table", "show"].includes(first)) return false;
+  // A WITH query can hold an INSERT, UPDATE or DELETE.
+  if (first === "with") return /\b(insert|update|delete|merge)\b/i.test(text);
+  return true;
 }
 
 /** The selected statements, or the statement at the cursor when nothing is selected. */

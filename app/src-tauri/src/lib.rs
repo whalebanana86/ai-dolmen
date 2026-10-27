@@ -49,6 +49,7 @@ pub fn run() {
             pg::pg_fork,
             pg::pg_set_read_only,
             pg::pg_assess,
+            pg::pg_explain,
             pg::pg_set_schema,
             pg::pg_current_schema,
             pg::object_plan,

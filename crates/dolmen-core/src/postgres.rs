@@ -550,6 +550,80 @@ impl Session {
         Ok(self.default_schema.lock().unwrap().clone())
     }
 
+    /// The session's search path, as `SHOW search_path` gives it.
+    pub async fn search_path(&self) -> Result<String, Error> {
+        Ok(self
+            .client
+            .query_one("SELECT pg_catalog.current_setting('search_path')", &[])
+            .await?
+            .get(0))
+    }
+
+    /// Sets the search path to one `search_path` returned.
+    pub async fn set_search_path(&self, path: &str) -> Result<(), Error> {
+        self.client
+            .execute(
+                "SELECT pg_catalog.set_config('search_path', $1, false)",
+                &[&path],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// The plan PostgreSQL chooses for `statement`, as EXPLAIN's JSON. With
+    /// `analyze` the statement runs, to measure it, in a transaction that is
+    /// rolled back. Meant for a session of its own: the rollback would end a
+    /// transaction the user had open.
+    pub async fn explain(
+        &self,
+        statement: &str,
+        analyze: bool,
+    ) -> Result<serde_json::Value, Error> {
+        let options = if analyze {
+            "ANALYZE, BUFFERS, FORMAT JSON"
+        } else {
+            "FORMAT JSON"
+        };
+        let prefix = format!("EXPLAIN ({options}) ");
+        let explain = format!("{prefix}{}", statement.trim().trim_end_matches(';'));
+        // The extended protocol takes one statement, so a second one can't
+        // ride along and escape the rollback.
+        let result = if analyze {
+            self.client.batch_execute("BEGIN").await?;
+            let result = self.client.query_one(&explain, &[]).await;
+            let rolled_back = self.client.batch_execute("ROLLBACK").await;
+            result.and_then(|row| rolled_back.map(|()| row))
+        } else {
+            self.client.query_one(&explain, &[]).await
+        };
+        match result.map_err(Error::from) {
+            Ok(row) => Ok(row.try_get(0)?),
+            // Positions count from the statement, not from the EXPLAIN before it.
+            Err(Error::Database {
+                message,
+                code,
+                detail,
+                hint,
+                position,
+            }) => {
+                // The leading space trimmed off counts again.
+                let leading =
+                    (statement.chars().count() - statement.trim_start().chars().count()) as u32;
+                let prefix = prefix.chars().count() as u32;
+                Err(Error::Database {
+                    message,
+                    code,
+                    detail,
+                    hint,
+                    position: position
+                        .and_then(|p| (p + leading).checked_sub(prefix))
+                        .filter(|p| *p > 0),
+                })
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     /// Asks the server to cancel the statement this session is running, if any.
     pub async fn cancel(&self) -> Result<(), Error> {
         self.client

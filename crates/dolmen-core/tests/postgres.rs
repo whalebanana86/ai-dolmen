@@ -483,6 +483,86 @@ async fn estimates_the_rows_a_risky_statement_touches() {
     );
 }
 
+#[tokio::test]
+async fn explains_a_statement_as_json() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let plan = session
+        .explain(
+            "SELECT * FROM pg_catalog.pg_class WHERE relname = 'x';",
+            false,
+        )
+        .await
+        .unwrap();
+    let top = &plan[0]["Plan"];
+    assert!(top["Node Type"].is_string(), "{plan}");
+    assert!(top["Total Cost"].is_number());
+    assert!(top.get("Actual Total Time").is_none());
+
+    let analyzed = session
+        .explain("SELECT count(*) FROM generate_series(1, 1000)", true)
+        .await
+        .unwrap();
+    assert!(analyzed[0]["Execution Time"].is_number(), "{analyzed}");
+    assert_eq!(analyzed[0]["Plan"]["Actual Rows"].as_f64(), Some(1.0));
+}
+
+#[tokio::test]
+async fn analyzing_a_change_rolls_it_back() {
+    let config = config_or_skip!();
+    let _exclusive = exclusive().await;
+    let session = connect(&config).await;
+    execute(
+        &session,
+        "DROP TABLE IF EXISTS explained; CREATE TABLE explained (id int); \
+         INSERT INTO explained VALUES (1), (2), (3)",
+    )
+    .await;
+    let plan = session
+        .explain("DELETE FROM explained", true)
+        .await
+        .unwrap();
+    assert_eq!(plan[0]["Plan"]["Node Type"], "ModifyTable");
+    let counted = execute(&session, "SELECT count(*) FROM explained").await;
+    assert_eq!(rows(&counted[0]).1, [vec![text("3")]]);
+    // One statement only: a second can't slip past the rollback.
+    assert!(
+        session
+            .explain("DELETE FROM explained; DROP TABLE explained", true)
+            .await
+            .is_err()
+    );
+    let counted = execute(&session, "SELECT count(*) FROM explained").await;
+    assert_eq!(rows(&counted[0]).1, [vec![text("3")]]);
+    execute(&session, "DROP TABLE explained").await;
+}
+
+#[tokio::test]
+async fn explain_errors_point_into_the_statement() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    match session.explain("  SELECT * FORM nowhere", false).await {
+        Err(Error::Database { code, position, .. }) => {
+            assert_eq!(code, "42601");
+            // "FORM" starts at the 12th character of the statement as given.
+            assert_eq!(position, Some(12));
+        }
+        other => panic!("expected a syntax error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn copies_the_search_path() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    execute(&session, "SET search_path = pg_catalog, public").await;
+    let path = session.search_path().await.unwrap();
+    assert_eq!(path, "pg_catalog, public");
+    let other = session.another().await.unwrap();
+    other.set_search_path(&path).await.unwrap();
+    assert_eq!(other.search_path().await.unwrap(), path);
+}
+
 // Needs no server: nothing listens on port 1.
 #[tokio::test]
 async fn explains_why_a_connection_failed() {
