@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import {
   Introspection,
@@ -30,6 +30,7 @@ import { SchemaTree } from "./SchemaTree";
 import { SettingsButton, SettingsDialog } from "./SettingsDialog";
 import { SnapshotPanel } from "./SnapshotPanel";
 import { SqlEditor } from "./SqlEditor";
+import { SqlTabs } from "./SqlTabs";
 import type { Messages } from "./i18n/en";
 import { useT } from "./settings";
 
@@ -55,6 +56,21 @@ interface Outcome {
   elapsedMs: number;
 }
 
+/** An editor tab: a console with its own session, text and results. */
+interface SqlTab {
+  id: number;
+  title: string;
+  /** Its own session, opened the first time it's needed; the first tab uses the connection's. */
+  sessionId: number | null;
+  /** The schema its unqualified names resolve in, as last read or chosen. */
+  schema: string | null;
+  /** The text the tab started with. */
+  initialSql: string;
+  outcome: Outcome | null;
+  running: boolean;
+  hasText: boolean;
+}
+
 interface Props {
   session: SessionInfo;
   /** The saved connection the session came from, if any. */
@@ -71,18 +87,41 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     tRef.current = t;
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const viewRef = useRef<EditorView | null>(null);
-  const [hasText, setHasText] = useState(INITIAL_SQL.trim() !== "");
-  // The editor keeps each connection's text, saved once typing pauses.
+  // Editor tabs, each a console with its own session, kept per connection.
   const editorKey = session.savedId ?? session.label;
-  const [initialSql, setInitialSql] = useState<string | null>(null);
-  const editorText = useRef<string | null>(null);
+  const [tabs, setTabs] = useState<SqlTab[] | null>(null);
+  const [activeId, setActiveId] = useState(1);
+  const tabsRef = useRef<SqlTab[] | null>(null);
+  tabsRef.current = tabs;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  const nextTabId = useRef(1);
+  const views = useRef(new Map<number, EditorView>());
+  const editorRefs = useRef(new Map<number, { current: EditorView | null }>());
+  /** Each tab's text as last typed, for saving even after its editor is gone. */
+  const texts = useRef(new Map<number, string>());
+  const forking = useRef(new Map<number, Promise<number>>());
   const saveTimer = useRef<number | undefined>(undefined);
+  /** The active tab's editor, for everything that works with "the editor". */
+  const viewRef = useMemo(
+    () => ({
+      get current() {
+        return views.current.get(activeIdRef.current) ?? null;
+      },
+      set current(_view: EditorView | null) {},
+    }),
+    [],
+  );
+  const active = tabs?.find((tab) => tab.id === activeId) ?? null;
+  const running = active?.running ?? false;
+  const outcome = active?.outcome ?? null;
+  const hasText = active?.hasText ?? false;
+  const updateTab = useCallback((id: number, change: (tab: SqlTab) => Partial<SqlTab>) => {
+    setTabs((current) => current?.map((tab) => (tab.id === id ? { ...tab, ...change(tab) } : tab)) ?? current);
+  }, []);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [introspection, setIntrospection] = useState<Introspection | null>(null);
   const [loadingSchema, setLoadingSchema] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const runCount = useRef(0);
   const { conversation, ask, stop: stopAi, clear: clearAi } = useAi(session.id);
   const [aiPrompting, setAiPrompting] = useState(false);
@@ -97,28 +136,169 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       .loadEditor(editorKey)
       .catch(() => null)
       .then((saved) => {
-        const text = saved ?? INITIAL_SQL;
-        setInitialSql(text);
-        setHasText(text.trim() !== "");
+        const restored = savedTabs(saved, tRef.current);
+        const made = restored.tabs.map(
+          (tab, i): SqlTab => ({
+            id: i + 1,
+            title: tab.title,
+            sessionId: i === 0 ? session.id : null,
+            schema: tab.schema,
+            initialSql: tab.sql,
+            outcome: null,
+            running: false,
+            hasText: tab.sql.trim() !== "",
+          }),
+        );
+        for (const tab of made) texts.current.set(tab.id, tab.initialSql);
+        nextTabId.current = made.length + 1;
+        setTabs(made);
+        setActiveId(made[Math.min(Math.max(restored.active, 0), made.length - 1)].id);
+        // The first tab's schema is the connection's own session's.
+        const first = made[0];
+        (first.schema ? pg.setSchema(session.id, first.schema) : pg.currentSchema(session.id))
+          .then((schema) => updateTab(first.id, () => ({ schema })))
+          .catch(() => {});
       });
   }, [editorKey]);
 
-  /** Saves the editor's text now, instead of after the pause. */
-  const saveEditor = useCallback(() => {
+  /** Saves the tabs now, instead of after the pause. */
+  const saveTabs = useCallback(() => {
     clearTimeout(saveTimer.current);
     saveTimer.current = undefined;
-    if (editorText.current !== null) {
-      history.saveEditor(editorKey, editorText.current).catch((error) => console.error("saving the editor failed", error));
-    }
+    const list = tabsRef.current;
+    if (!list) return;
+    const saved = {
+      version: 1,
+      active: Math.max(0, list.findIndex((tab) => tab.id === activeIdRef.current)),
+      tabs: list.map((tab) => ({
+        title: tab.title,
+        sql: texts.current.get(tab.id) ?? tab.initialSql,
+        schema: tab.schema,
+      })),
+    };
+    history.saveEditor(editorKey, JSON.stringify(saved)).catch((error) => console.error("saving the editor failed", error));
   }, [editorKey]);
-  useEffect(() => saveEditor, [saveEditor]);
-
-  function editorChanged(value: string) {
-    setHasText(value.trim() !== "");
-    editorText.current = value;
+  useEffect(() => saveTabs, [saveTabs]);
+  const scheduleSave = useCallback(() => {
     clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(saveEditor, 800);
+    saveTimer.current = window.setTimeout(saveTabs, 800);
+  }, [saveTabs]);
+
+  // Tabs opened, closed, renamed, switched or moved to another schema are kept too.
+  const tabsShape = JSON.stringify([activeId, tabs?.map((tab) => [tab.id, tab.title, tab.schema])]);
+  useEffect(() => {
+    if (tabsRef.current) scheduleSave();
+  }, [tabsShape]);
+
+  function editorChanged(id: number, value: string) {
+    texts.current.set(id, value);
+    const hasText = value.trim() !== "";
+    if (tabsRef.current?.find((tab) => tab.id === id)?.hasText !== hasText) updateTab(id, () => ({ hasText }));
+    scheduleSave();
   }
+
+  /** Where tab `id`'s editor registers itself. */
+  function editorRef(id: number) {
+    let ref = editorRefs.current.get(id);
+    if (!ref) {
+      ref = {
+        get current() {
+          return views.current.get(id) ?? null;
+        },
+        set current(view: EditorView | null) {
+          if (view) views.current.set(id, view);
+          else views.current.delete(id);
+        },
+      };
+      editorRefs.current.set(id, ref);
+    }
+    return ref;
+  }
+
+  /** The tab's session, opened the first time the tab needs one. */
+  function sessionOf(id: number): Promise<number> {
+    const tab = tabsRef.current?.find((t) => t.id === id);
+    if (!tab) return Promise.reject(new Error("the tab is closed"));
+    if (tab.sessionId !== null) return Promise.resolve(tab.sessionId);
+    let opening = forking.current.get(id);
+    if (!opening) {
+      opening = (async () => {
+        const forked = await pg.fork(session.id);
+        const schema = tab.schema
+          ? await pg.setSchema(forked.id, tab.schema).catch(() => null)
+          : await pg.currentSchema(forked.id).catch(() => null);
+        updateTab(id, () => ({ sessionId: forked.id, schema }));
+        return forked.id;
+      })();
+      forking.current.set(id, opening);
+      opening.finally(() => forking.current.delete(id)).catch(() => {});
+    }
+    return opening;
+  }
+
+  function newTab() {
+    const id = nextTabId.current++;
+    texts.current.set(id, "");
+    const schema = tabsRef.current?.find((tab) => tab.id === activeIdRef.current)?.schema ?? null;
+    setTabs((list) => [
+      ...(list ?? []),
+      {
+        id,
+        title: t.tabs.console(id),
+        sessionId: null,
+        schema,
+        initialSql: "",
+        outcome: null,
+        running: false,
+        hasText: false,
+      },
+    ]);
+    setActiveId(id);
+  }
+
+  function closeTab(id: number) {
+    const list = tabsRef.current ?? [];
+    if (list.length <= 1) return;
+    const index = list.findIndex((tab) => tab.id === id);
+    const tab = list[index];
+    if (tab.sessionId !== null && tab.sessionId !== session.id) {
+      pg.disconnect(tab.sessionId).catch((error) => console.error("closing the tab's session failed", error));
+    }
+    texts.current.delete(id);
+    editorRefs.current.delete(id);
+    const rest = list.filter((t) => t.id !== id);
+    setTabs(rest);
+    if (activeIdRef.current === id) setActiveId(rest[Math.min(index, rest.length - 1)].id);
+  }
+
+  function switchTab(step: number) {
+    const list = tabsRef.current ?? [];
+    const index = list.findIndex((tab) => tab.id === activeIdRef.current);
+    if (list.length > 1) setActiveId(list[(index + step + list.length) % list.length].id);
+  }
+
+  async function changeSchema(schema: string) {
+    const id = activeIdRef.current;
+    try {
+      const now = await pg.setSchema(await sessionOf(id), schema);
+      updateTab(id, () => ({ schema: now }));
+    } catch (error) {
+      updateTab(id, () => ({
+        outcome: {
+          runId: ++runCount.current,
+          results: [],
+          failure: { error, location: null, statement: { statement: `SET search_path TO ${schema}`, start: 0, end: 0 } },
+          statementCount: 1,
+          firstLine: 1,
+          elapsedMs: 0,
+        },
+      }));
+    }
+  }
+
+  // The keyboard reaches the latest tab functions through here.
+  const tabActions = useRef({ newTab, switchTab });
+  tabActions.current = { newTab, switchTab };
 
   // ⌘B and ⌘J show and hide the schema tree and the results, as in VS Code; ⌘⇧H opens the history.
   useEffect(() => {
@@ -126,6 +306,17 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "h") {
         e.preventDefault();
         setHistoryOpen((open) => !open);
+        return;
+      }
+      // ⌘T opens a tab; Ctrl+Tab and Ctrl+Shift+Tab go through them.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        tabActions.current.newTab();
+        return;
+      }
+      if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault();
+        tabActions.current.switchTab(e.shiftKey ? -1 : 1);
         return;
       }
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
@@ -239,22 +430,35 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
 
   async function run() {
     const view = viewRef.current;
-    if (running || !view) return;
+    const tabId = activeIdRef.current;
+    const tab = tabsRef.current?.find((t) => t.id === tabId);
+    if (!view || !tab || tab.running) return;
     const sql = view.state.doc.toString();
     const { from, to } = view.state.selection.main;
     const ranges = await statementsToRun(sql, from, to);
     if (ranges.length === 0) return;
 
-    setRunning(true);
+    updateTab(tabId, () => ({ running: true }));
     updateLayout({ resultsVisible: true });
     const started = performance.now();
     const results: Outcome["results"] = [];
     let failure: Outcome["failure"] = null;
+    let sessionId: number | null = null;
+    try {
+      sessionId = await sessionOf(tabId);
+    } catch (error) {
+      const first = ranges[0];
+      failure = {
+        error,
+        location: null,
+        statement: { statement: sql.slice(first.start, first.end), start: first.start, end: first.end },
+      };
+    }
     // One statement at a time, so a failure doesn't roll back the ones before it.
-    for (const range of ranges) {
+    for (const range of sessionId === null ? [] : ranges) {
       const statement = sql.slice(range.start, range.end);
       try {
-        for (const result of await pg.execute(session.id, statement)) {
+        for (const result of await pg.execute(sessionId!, statement)) {
           results.push({ result, statement: { statement, start: range.start, end: range.end } });
         }
       } catch (error) {
@@ -266,15 +470,21 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         break;
       }
     }
-    setOutcome({
+    const finished: Outcome = {
       runId: ++runCount.current,
       results,
       failure,
       statementCount: ranges.length,
       firstLine: lineAt(sql, ranges[0].start),
       elapsedMs: performance.now() - started,
-    });
-    setRunning(false);
+    };
+    updateTab(tabId, () => ({ running: false, outcome: finished }));
+    // The statements may have changed the search path.
+    if (sessionId !== null) {
+      pg.currentSchema(sessionId)
+        .then((schema) => updateTab(tabId, () => ({ schema })))
+        .catch(() => {});
+    }
     // DDL such as CREATE TABLE returns no rows; reload the tree, completion and snapshot status.
     if (results.some(({ result }) => result.kind === "command")) {
       refreshSchema();
@@ -366,11 +576,16 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
 
   function cancel() {
     // The running statement fails with query_canceled, which stops the run.
-    pg.cancel(session.id).catch((error) => console.error("cancel failed", error));
+    if (active?.sessionId != null) {
+      pg.cancel(active.sessionId).catch((error) => console.error("cancel failed", error));
+    }
   }
 
   async function disconnect() {
-    saveEditor();
+    saveTabs();
+    for (const tab of tabsRef.current ?? []) {
+      if (tab.sessionId !== null && tab.sessionId !== session.id) pg.disconnect(tab.sessionId).catch(() => {});
+    }
     await pg.disconnect(session.id);
     onDisconnect();
   }
@@ -464,22 +679,40 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           </>
         )}
         <div className="workspace-main" ref={mainRef}>
-          {initialSql === null ? (
-            // The saved text loads in a moment; the editor is made with it.
+          {tabs && (
+            <SqlTabs
+              tabs={tabs}
+              activeId={activeId}
+              onSelect={setActiveId}
+              onNew={newTab}
+              onClose={closeTab}
+              onRename={(id, title) => updateTab(id, () => ({ title }))}
+              schemas={introspection?.database.schemas.map((schema) => schema.name) ?? []}
+              schema={active?.schema ?? null}
+              onSchemaChange={changeSchema}
+            />
+          )}
+          {tabs === null ? (
+            // The saved tabs load in a moment; the editors are made with their text.
             <div
               className={layout.resultsVisible ? "editor" : "editor fill"}
               style={layout.resultsVisible ? { height: layout.editorHeight } : undefined}
             />
           ) : (
-            <SqlEditor
-              initialValue={initialSql}
-              introspection={introspection}
-              onRun={run}
-              onAsk={() => setAiPrompting(true)}
-              onChange={editorChanged}
-              viewRef={viewRef}
-              height={layout.resultsVisible ? layout.editorHeight : null}
-            />
+            tabs.map((tab) => (
+              <SqlEditor
+                key={tab.id}
+                initialValue={tab.initialSql}
+                introspection={introspection}
+                onRun={run}
+                onAsk={() => setAiPrompting(true)}
+                onChange={(value) => editorChanged(tab.id, value)}
+                viewRef={editorRef(tab.id)}
+                height={layout.resultsVisible ? layout.editorHeight : null}
+                defaultSchema={tab.schema}
+                hidden={tab.id !== activeId}
+              />
+            ))
           )}
           {layout.resultsVisible && (
             <Splitter
@@ -682,6 +915,33 @@ function PanelIcon({ side, shown }: { side: "left" | "bottom"; shown: boolean })
       {shown && <rect {...panel} rx="1" fill="currentColor" opacity="0.45" />}
     </svg>
   );
+}
+
+interface SavedTabs {
+  active: number;
+  tabs: { title: string; sql: string; schema: string | null }[];
+}
+
+/** The tabs saved for a connection: this version's JSON, or the text of the single editor before tabs. */
+function savedTabs(saved: string | null, t: Messages): SavedTabs {
+  if (saved?.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(saved) as { active?: unknown; tabs?: unknown };
+      if (Array.isArray(parsed.tabs) && parsed.tabs.length > 0) {
+        return {
+          active: typeof parsed.active === "number" ? parsed.active : 0,
+          tabs: parsed.tabs.map((tab: { title?: unknown; sql?: unknown; schema?: unknown }, i: number) => ({
+            title: typeof tab.title === "string" && tab.title ? tab.title : t.tabs.console(i + 1),
+            sql: typeof tab.sql === "string" ? tab.sql : "",
+            schema: typeof tab.schema === "string" ? tab.schema : null,
+          })),
+        };
+      }
+    } catch {
+      // Text that only looks like JSON: an editor's text from before tabs.
+    }
+  }
+  return { active: 0, tabs: [{ title: t.tabs.console(1), sql: saved ?? INITIAL_SQL, schema: null }] };
 }
 
 /** The selected statements, or the statement at the cursor when nothing is selected. */

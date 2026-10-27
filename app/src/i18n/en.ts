@@ -302,6 +302,18 @@ export const en = {
       `Each ${referenced} row: ${children} ${table} rows. Each ${table} row: ${parents} ${referenced} row.`,
   },
 
+  tabs: {
+    label: "Editor tabs",
+    console: (n: number) => `Console ${n}`,
+    newTitle: "New tab (⌘T): a console with its own session",
+    close: "Close tab",
+    rename: "Tab name",
+    renameTitle: "Double-click to rename; Ctrl+Tab goes to the next tab",
+    schema: "Schema",
+    schemaTitle: "Where this tab's unqualified names resolve: its session's search_path",
+    noSchema: "(none)",
+  },
+
   history: {
     title: "Query history",
     button: "History",

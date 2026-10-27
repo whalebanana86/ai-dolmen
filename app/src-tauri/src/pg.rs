@@ -144,6 +144,71 @@ pub async fn pg_connect(
     Ok(info)
 }
 
+/// Opens another session to the session's database, for an editor tab of its
+/// own: separate transactions, search path and cancelling.
+#[tauri::command]
+pub async fn pg_fork(session_id: u64, sessions: State<'_, Sessions>) -> Result<SessionInfo, Error> {
+    let (original, connection, apply_allowed) = {
+        let open = sessions.open.lock().unwrap();
+        let open = open.get(&session_id).ok_or(Error::Closed)?;
+        (
+            Arc::clone(&open.session),
+            open.connection.clone(),
+            open.apply_allowed,
+        )
+    };
+    let session = original.another().await?;
+    let id = sessions.next_id.fetch_add(1, Ordering::Relaxed);
+    let info = SessionInfo {
+        id,
+        server_version: session.server_version().to_owned(),
+        database: session_database(&original),
+        saved_id: connection.saved_id.clone(),
+        label: connection.label.clone(),
+        address: session_address(&original),
+    };
+    sessions.open.lock().unwrap().insert(
+        id,
+        Open {
+            session: Arc::new(session),
+            connection,
+            apply_allowed,
+        },
+    );
+    Ok(info)
+}
+
+/// Sets the schema the session's unqualified names resolve in, and returns it.
+#[tauri::command]
+pub async fn pg_set_schema(
+    session_id: u64,
+    schema: String,
+    sessions: State<'_, Sessions>,
+) -> Result<Option<String>, Error> {
+    sessions.get(session_id)?.set_schema(&schema).await
+}
+
+/// The schema the session's unqualified names resolve in first.
+#[tauri::command]
+pub async fn pg_current_schema(
+    session_id: u64,
+    sessions: State<'_, Sessions>,
+) -> Result<Option<String>, Error> {
+    sessions.get(session_id)?.current_schema().await
+}
+
+fn session_database(session: &Session) -> String {
+    session.config().database.clone()
+}
+
+fn session_address(session: &Session) -> String {
+    let config = session.config();
+    format!(
+        "{}@{}:{}/{}",
+        config.user, config.host, config.port, config.database
+    )
+}
+
 #[tauri::command]
 pub async fn pg_execute(
     session_id: u64,

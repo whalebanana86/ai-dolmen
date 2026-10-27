@@ -432,3 +432,24 @@ async fn require_fails_when_the_server_has_no_tls() {
         .expect("connect should fail");
     assert!(matches!(err, Error::Connection { .. }), "got {err:?}");
 }
+
+#[tokio::test]
+async fn another_session_keeps_its_own_search_path() {
+    let config = config_or_skip!();
+    let _exclusive = exclusive().await;
+    let first = Session::connect(&config).await.expect("connect");
+    first
+        .execute("CREATE SCHEMA IF NOT EXISTS tab_test", 0)
+        .await
+        .unwrap();
+    let second = first.another().await.expect("another session");
+    assert_eq!(
+        second.set_schema("tab_test").await.unwrap().as_deref(),
+        Some("tab_test")
+    );
+    assert_eq!(
+        first.current_schema().await.unwrap().as_deref(),
+        Some("public")
+    );
+    first.execute("DROP SCHEMA tab_test", 0).await.unwrap();
+}

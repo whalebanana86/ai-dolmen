@@ -233,6 +233,11 @@ impl Session {
         &self.server_version
     }
 
+    /// The settings the session connected with.
+    pub fn config(&self) -> &ConnectConfig {
+        &self.config
+    }
+
     /// Runs one or more `;`-separated statements and returns a result per statement.
     ///
     /// Statements are sent in a single simple query, so PostgreSQL runs them in one
@@ -417,6 +422,26 @@ impl Session {
         }
         transaction.commit().await?;
         Ok(())
+    }
+
+    /// Another session to the same database, with the same settings, for
+    /// running statements apart from this one: its own transactions, search
+    /// path and cancellation.
+    pub async fn another(&self) -> Result<Session, Error> {
+        Session::connect(&self.config).await
+    }
+
+    /// Makes unqualified names resolve in `schema`, then `public`, for this
+    /// session, and returns the schema they now resolve in first.
+    pub async fn set_schema(&self, schema: &str) -> Result<Option<String>, Error> {
+        let mut path = crate::postgres::ddl::quote_ident(schema);
+        if schema != "public" {
+            path.push_str(", public");
+        }
+        self.client
+            .batch_execute(&format!("SET search_path TO {path}"))
+            .await?;
+        self.current_schema().await
     }
 
     /// The schema unqualified names resolve to first, usually `public`. While

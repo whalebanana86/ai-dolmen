@@ -1998,3 +1998,131 @@ button.link:hover {
   margin: 0;
   font-size: 12px;
 }
+
+/* Editor tabs, and the active tab's schema */
+
+.sql-tabs {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 8px 0 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.sql-tab-list {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sql-tab {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 6px 6px 6px 12px;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sql-tab:hover {
+  color: var(--text);
+}
+
+.sql-tab.selected {
+  margin-bottom: -1px;
+  border-bottom: 1px solid var(--surface);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.sql-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-tab-rename {
+  width: 120px;
+  padding: 1px 4px;
+  font-size: 12px;
+}
+
+.sql-tab-running {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tab-running 1s ease-in-out infinite alternate;
+}
+
+@keyframes tab-running {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sql-tab-close {
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  visibility: hidden;
+}
+
+.sql-tab:hover .sql-tab-close,
+.sql-tab.selected .sql-tab-close {
+  visibility: visible;
+}
+
+.sql-tab-close:hover {
+  color: var(--text);
+}
+
+.sql-tab-new {
+  flex-shrink: 0;
+  margin: 4px;
+  padding: 0 9px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.sql-tab-new:hover {
+  color: var(--text);
+}
+
+.schema-picker {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.schema-picker select {
+  width: auto;
+  max-width: 180px;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}

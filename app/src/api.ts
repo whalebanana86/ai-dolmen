@@ -258,6 +258,12 @@ export const pg = {
   introspect: (sessionId: number) => invoke<Introspection>("pg_introspect", { sessionId }),
   cancel: (sessionId: number) => invoke<void>("pg_cancel", { sessionId }),
   disconnect: (sessionId: number) => invoke<void>("pg_disconnect", { sessionId }),
+  /** Another session to the same database, for an editor tab of its own. */
+  fork: (sessionId: number) => invoke<SessionInfo>("pg_fork", { sessionId }),
+  /** Makes the session's unqualified names resolve in `schema` (then public); returns where they now do. */
+  setSchema: (sessionId: number, schema: string) => invoke<string | null>("pg_set_schema", { sessionId, schema }),
+  /** The schema the session's unqualified names resolve in first. */
+  currentSchema: (sessionId: number) => invoke<string | null>("pg_current_schema", { sessionId }),
 };
 
 /** A connection the user saved. Its password, if any, stays in the OS keychain. */

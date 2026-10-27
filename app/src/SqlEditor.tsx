@@ -20,9 +20,23 @@ interface Props {
   viewRef: { current: EditorView | null };
   /** In px, or null to fill the space below the toolbar. */
   height: number | null;
+  /** The schema unqualified names complete from; the database's default when unset. */
+  defaultSchema?: string | null;
+  /** A tab in the background keeps its editor, out of sight. */
+  hidden?: boolean;
 }
 
-export function SqlEditor({ initialValue, introspection, onRun, onAsk, onChange, viewRef, height }: Props) {
+export function SqlEditor({
+  initialValue,
+  introspection,
+  onRun,
+  onAsk,
+  onChange,
+  viewRef,
+  height,
+  defaultSchema,
+  hidden = false,
+}: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const t = useT();
   const [language] = useState(() => new Compartment());
@@ -58,7 +72,7 @@ export function SqlEditor({ initialValue, introspection, onRun, onAsk, onChange,
             ]),
           ),
           basicSetup,
-          language.of(sqlLanguage(null)),
+          language.of(sqlLanguage(null, null)),
           phrases.of(EditorState.phrases.of(t.editorPhrases)),
           syntaxHighlighting(highlightStyle),
           theme,
@@ -78,8 +92,19 @@ export function SqlEditor({ initialValue, introspection, onRun, onAsk, onChange,
   }, []);
 
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: language.reconfigure(sqlLanguage(introspection)) });
-  }, [introspection, language, viewRef]);
+    viewRef.current?.dispatch({
+      effects: language.reconfigure(sqlLanguage(introspection, defaultSchema ?? null)),
+    });
+  }, [introspection, defaultSchema, language, viewRef]);
+
+  // Back in sight, the editor measures itself again and takes the focus.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!hidden && view) {
+      view.requestMeasure();
+      view.focus();
+    }
+  }, [hidden, viewRef]);
 
   // CodeMirror's own labels, such as the search panel's, follow the app's language.
   useEffect(() => {
@@ -90,17 +115,17 @@ export function SqlEditor({ initialValue, introspection, onRun, onAsk, onChange,
     <div
       ref={parentRef}
       className={height === null ? "editor fill" : "editor"}
-      style={height === null ? undefined : { height }}
+      style={hidden ? { display: "none" } : height === null ? undefined : { height }}
     />
   );
 }
 
-function sqlLanguage(introspection: Introspection | null) {
+function sqlLanguage(introspection: Introspection | null, defaultSchema: string | null) {
   return sql({
     dialect: PostgreSQL,
     upperCaseKeywords: true,
     schema: introspection ? namespace(introspection) : undefined,
-    defaultSchema: introspection?.defaultSchema ?? undefined,
+    defaultSchema: defaultSchema ?? introspection?.defaultSchema ?? undefined,
   });
 }
 

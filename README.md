@@ -76,6 +76,10 @@ your consent, and they can go into the editor instead.
 
 ## Query history
 
+The editor has tabs (⌘T), each a console with its own session, so transactions,
+the search path and cancelling stay apart; the schema picker beside the tabs
+shows and sets where the active tab's unqualified names resolve.
+
 **History** (⌘⇧H) lists the statements run on each connection, newest first,
 to search, star, insert into the editor or run again; edits and snapshots
 applied from the app are listed too. It stays on this computer in a SQLite file
