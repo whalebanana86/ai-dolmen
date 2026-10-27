@@ -12,7 +12,8 @@ use dolmen_core::{Error, Refusal};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use crate::pg::Sessions;
+use crate::history::{HistoryStore, Started};
+use crate::pg::{Sessions, record_plan};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -223,6 +224,8 @@ pub async fn snapshot_plan(
 /// Applies the plan the user reviewed, given as its steps' SQL. The plan is
 /// made again here, and if it differs from what they reviewed, because the
 /// database or the snapshot changed since, nothing is applied.
+// Tauri hands a command its arguments and app state as separate parameters.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn snapshot_apply(
     session_id: u64,
@@ -232,6 +235,7 @@ pub async fn snapshot_apply(
     reviewed: Vec<String>,
     allow_destructive: bool,
     sessions: State<'_, Sessions>,
+    history: State<'_, HistoryStore>,
 ) -> Result<(), Error> {
     let session = sessions.get(session_id)?;
     if !session.is_local() {
@@ -260,7 +264,18 @@ pub async fn snapshot_apply(
             "The plan drops data or changes column types; allow that explicitly to apply it.",
         ));
     }
-    session.apply(&plan).await
+    let started = Started::now();
+    let result = session.apply(&plan).await;
+    record_plan(
+        &sessions,
+        &history,
+        session_id,
+        &plan,
+        started,
+        &result,
+        dolmen_core::history::Source::Snapshot,
+    );
+    result
 }
 
 fn target_model(dir: &Path, rev: Option<&str>) -> Result<Database, Error> {

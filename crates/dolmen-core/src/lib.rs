@@ -6,6 +6,7 @@ pub mod ai;
 pub mod connections;
 mod error;
 pub mod git;
+pub mod history;
 pub mod postgres;
 pub mod schema;
 pub mod snapshot;

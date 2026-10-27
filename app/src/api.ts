@@ -18,6 +18,10 @@ export interface SessionInfo {
   id: number;
   serverVersion: string;
   database: string;
+  /** The saved connection it came from, if any. */
+  savedId: string | null;
+  /** The saved connection's name, or user@host:port/database. */
+  label: string;
 }
 
 export type StatementResult =
@@ -254,6 +258,8 @@ export interface SavedConnection {
   snapshotDir: string | null;
   /** A repository Dolmen clones and pushes for the snapshot; used instead of snapshotDir. */
   snapshotRemote: SnapshotRemote | null;
+  /** Whether statements run on this connection go into the query history. */
+  recordHistory: boolean;
 }
 
 export interface SnapshotRemote {
@@ -395,6 +401,53 @@ export const objects = {
   /** Applies the reviewed statements in one transaction; refused if the plan changed since. */
   apply: (sessionId: number, edit: ObjectEdit, reviewed: string[], allowDestructive: boolean) =>
     invoke<void>("object_apply", { sessionId, edit, reviewed, allowDestructive }),
+};
+
+/** A statement run, or a reviewed plan applied, as the query history keeps it. */
+export interface HistoryRun {
+  id: number;
+  connectionId: string | null;
+  /** The connection's name, or user@host:port/database. */
+  connection: string;
+  /** With passwords and other secrets masked, unless that is turned off. */
+  sql: string;
+  /** Milliseconds since the Unix epoch. */
+  startedAt: number;
+  durationMs: number;
+  status: "ok" | "error" | "cancelled";
+  /** Rows returned or affected. */
+  rows: number | null;
+  error: string | null;
+  source: "editor" | "detail" | "snapshot";
+  starred: boolean;
+}
+
+export interface HistoryFilter {
+  /** Only this saved connection's runs; all connections when unset. */
+  connectionId?: string | null;
+  /** Only runs of the connection with this label, for one that isn't saved. */
+  connection?: string | null;
+  /** Runs whose SQL contains this text, ignoring case. */
+  text?: string | null;
+  status?: HistoryRun["status"] | null;
+  starredOnly?: boolean;
+  /** Runs older than this id, to page through the list. */
+  before?: number | null;
+  limit?: number;
+}
+
+export const history = {
+  /** Newest first. */
+  list: (filter: HistoryFilter) => invoke<HistoryRun[]>("history_list", { filter }),
+  star: (id: number, starred: boolean) => invoke<void>("history_star", { id, starred }),
+  delete: (ids: number[]) => invoke<void>("history_delete", { ids }),
+  /** Deletes unstarred runs of one saved connection, or of all when null. */
+  clear: (connectionId: string | null) => invoke<void>("history_clear", { connectionId }),
+  settings: () => invoke<{ redact: boolean }>("history_settings"),
+  setSettings: (settings: { redact: boolean }) => invoke<void>("history_set_settings", { settings }),
+  /** The editor text last saved for a connection. */
+  loadEditor: (key: string) => invoke<string | null>("editor_load", { key }),
+  saveEditor: (key: string, content: string) => invoke<void>("editor_save", { key, content }),
 };
 
 export const ai = {

@@ -124,6 +124,7 @@ fn saved_connections_use_camel_case() {
             url: "git@github.com:you/schema.git".into(),
             path: "db/schema".into(),
         }),
+        record_history: false,
     };
     let value = serde_json::to_value(&connection).unwrap();
     assert_eq!(
@@ -139,6 +140,7 @@ fn saved_connections_use_camel_case() {
             "hasPassword": true,
             "snapshotDir": null,
             "snapshotRemote": { "url": "git@github.com:you/schema.git", "path": "db/schema" },
+            "recordHistory": false,
         })
     );
     assert_eq!(

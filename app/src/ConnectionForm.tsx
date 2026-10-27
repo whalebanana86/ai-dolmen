@@ -28,6 +28,7 @@ const NEW_CONNECTION: Draft = {
   hasPassword: false,
   snapshotDir: null,
   snapshotRemote: null,
+  recordHistory: true,
 };
 
 function toDraft(connection: SavedConnection): Draft {
@@ -244,6 +245,14 @@ export function ConnectionForm({ onConnected }: Props) {
               onChange={(e) => setSavePassword(e.target.checked)}
             />
             {t.connect.savePassword}
+          </label>
+          <label className="checkbox" title={t.connect.recordHistoryTitle}>
+            <input
+              type="checkbox"
+              checked={draft.recordHistory}
+              onChange={(e) => setDraft({ ...draft, recordHistory: e.target.checked })}
+            />
+            {t.connect.recordHistory}
           </label>
 
           {error && <p className="error-text">{error}</p>}

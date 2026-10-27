@@ -12,6 +12,8 @@ futures-util = "0.3"
 keyring-core = "1"
 native-tls = "0.2"
 postgres-native-tls = "0.5"
+regex = "1"
+rusqlite = { version = "0.41", features = ["bundled"] }
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "stream", "json", "http2", "charset", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

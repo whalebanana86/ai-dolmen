@@ -41,6 +41,14 @@ pub struct SavedConnection {
     /// it is used instead of `snapshot_dir`.
     #[serde(default)]
     pub snapshot_remote: Option<SnapshotRemote>,
+    /// Whether statements run on this connection go into the query history.
+    /// Turned off for databases whose SQL shouldn't be kept, such as production.
+    #[serde(default = "record_by_default")]
+    pub record_history: bool,
+}
+
+fn record_by_default() -> bool {
+    true
 }
 
 /// A snapshot kept in a repository Dolmen manages its own clone of.

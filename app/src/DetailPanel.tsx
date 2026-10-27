@@ -139,7 +139,7 @@ export function DetailPanel(props: Props) {
 }
 
 /** The right-hand panel: resizable from its left edge, closed with ✕ or a click beside it. */
-function PanelShell({
+export function PanelShell({
   label,
   width,
   onResize,

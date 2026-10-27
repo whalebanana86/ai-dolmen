@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AI_MODELS, AiModel, ai, errorMessage } from "./api";
+import { AI_MODELS, AiModel, ai, errorMessage, history } from "./api";
 import { LOCALES, Locale, Theme, useSettings, useT } from "./settings";
 
 const THEMES: Theme[] = ["system", "light", "dark"];
@@ -44,10 +44,71 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               </label>
             ))}
           </fieldset>
+          <HistorySettings />
           <AiSettings />
         </div>
       </div>
     </div>
+  );
+}
+
+/** Masking secrets in the query history, and clearing it. */
+function HistorySettings() {
+  const t = useT();
+  const [redact, setRedact] = useState<boolean | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
+
+  useEffect(() => {
+    history
+      .settings()
+      .then((settings) => setRedact(settings.redact))
+      .catch((err) => setNote({ text: errorMessage(err, t), error: true }));
+  }, []);
+
+  async function changeRedact(value: boolean) {
+    try {
+      await history.setSettings({ redact: value });
+      setRedact(value);
+    } catch (err) {
+      setNote({ text: errorMessage(err, t), error: true });
+    }
+  }
+
+  async function clear() {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    try {
+      await history.clear(null);
+      setNote({ text: t.settings.history.cleared, error: false });
+    } catch (err) {
+      setNote({ text: errorMessage(err, t), error: true });
+    }
+  }
+
+  return (
+    <fieldset className="field ai-settings">
+      <legend>{t.settings.history.title}</legend>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={redact ?? true}
+          disabled={redact === null}
+          onChange={(e) => changeRedact(e.target.checked)}
+        />
+        {t.settings.history.redact}
+      </label>
+      <p className="muted">{t.settings.history.retention}</p>
+      <div className="key-row">
+        <button className={confirming ? "danger" : undefined} onClick={clear} onBlur={() => setConfirming(false)}>
+          {confirming ? t.settings.history.confirmClear : t.settings.history.clearAll}
+        </button>
+      </div>
+      {note && <span className={note.error ? "error-text" : "muted"}>{note.text}</span>}
+    </fieldset>
   );
 }
 

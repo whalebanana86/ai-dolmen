@@ -74,6 +74,16 @@ comments), a view's query or a function's definition. Dolmen shows the
 statements first; they run in one transaction, steps that can lose data need
 your consent, and they can go into the editor instead.
 
+## Query history
+
+**History** (⌘⇧H) lists the statements run on each connection, newest first,
+to search, star, insert into the editor or run again; edits and snapshots
+applied from the app are listed too. It stays on this computer in a SQLite file
+readable only by you, keeps 90 days and up to 10,000 queries per connection
+(starred ones until you remove them), masks passwords and connection secrets,
+and never keeps result rows. Turn it off per connection for databases whose SQL
+shouldn't be kept. The editor's text is kept per connection as well.
+
 ## AI
 
 Press **AI** (⌘K) in the editor to ask Claude to write SQL for a request in

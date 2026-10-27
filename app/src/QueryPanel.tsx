@@ -12,6 +12,7 @@ import {
   TextRange,
   connections,
   errorMessage,
+  history,
   isAppError,
   AiTask,
   pg,
@@ -20,6 +21,7 @@ import {
 } from "./api";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
 import { CreatePanel, DetailPanel } from "./DetailPanel";
+import { HistoryPanel } from "./HistoryPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
 import { ResultView } from "./ResultView";
@@ -70,6 +72,12 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   const [settingsOpen, setSettingsOpen] = useState(false);
   const viewRef = useRef<EditorView | null>(null);
   const [hasText, setHasText] = useState(INITIAL_SQL.trim() !== "");
+  // The editor keeps each connection's text, saved once typing pauses.
+  const editorKey = session.savedId ?? session.label;
+  const [initialSql, setInitialSql] = useState<string | null>(null);
+  const editorText = useRef<string | null>(null);
+  const saveTimer = useRef<number | undefined>(undefined);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [introspection, setIntrospection] = useState<Introspection | null>(null);
   const [loadingSchema, setLoadingSchema] = useState(false);
   const [running, setRunning] = useState(false);
@@ -83,9 +91,42 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   const [erd, setErd] = useState<{ schema: string | null; focus: string | null } | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
 
-  // ⌘B and ⌘J show and hide the schema tree and the results, as in VS Code.
+  useEffect(() => {
+    history
+      .loadEditor(editorKey)
+      .catch(() => null)
+      .then((saved) => {
+        const text = saved ?? INITIAL_SQL;
+        setInitialSql(text);
+        setHasText(text.trim() !== "");
+      });
+  }, [editorKey]);
+
+  /** Saves the editor's text now, instead of after the pause. */
+  const saveEditor = useCallback(() => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = undefined;
+    if (editorText.current !== null) {
+      history.saveEditor(editorKey, editorText.current).catch((error) => console.error("saving the editor failed", error));
+    }
+  }, [editorKey]);
+  useEffect(() => saveEditor, [saveEditor]);
+
+  function editorChanged(value: string) {
+    setHasText(value.trim() !== "");
+    editorText.current = value;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(saveEditor, 800);
+  }
+
+  // ⌘B and ⌘J show and hide the schema tree and the results, as in VS Code; ⌘⇧H opens the history.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "h") {
+        e.preventDefault();
+        setHistoryOpen((open) => !open);
+        return;
+      }
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
       const panel = { b: "treeVisible", j: "resultsVisible" } as const;
       const key = e.key.toLowerCase();
@@ -307,6 +348,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   }
 
   async function disconnect() {
+    saveEditor();
     await pg.disconnect(session.id);
     onDisconnect();
   }
@@ -349,6 +391,9 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         )}
         <button onClick={() => setAiPrompting(true)} title={t.ai.buttonTitle}>
           {t.ai.button}
+        </button>
+        <button onClick={() => setHistoryOpen(true)} title={t.history.buttonTitle}>
+          {t.history.button}
         </button>
         <button
           onClick={() => setErd({ schema: introspection?.defaultSchema ?? null, focus: null })}
@@ -397,15 +442,23 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           </>
         )}
         <div className="workspace-main" ref={mainRef}>
-          <SqlEditor
-            initialValue={INITIAL_SQL}
-            introspection={introspection}
-            onRun={run}
-            onAsk={() => setAiPrompting(true)}
-            onChange={(value) => setHasText(value.trim() !== "")}
-            viewRef={viewRef}
-            height={layout.resultsVisible ? layout.editorHeight : null}
-          />
+          {initialSql === null ? (
+            // The saved text loads in a moment; the editor is made with it.
+            <div
+              className={layout.resultsVisible ? "editor" : "editor fill"}
+              style={layout.resultsVisible ? { height: layout.editorHeight } : undefined}
+            />
+          ) : (
+            <SqlEditor
+              initialValue={initialSql}
+              introspection={introspection}
+              onRun={run}
+              onAsk={() => setAiPrompting(true)}
+              onChange={editorChanged}
+              viewRef={viewRef}
+              height={layout.resultsVisible ? layout.editorHeight : null}
+            />
+          )}
           {layout.resultsVisible && (
             <Splitter
               orientation="horizontal"
@@ -511,6 +564,24 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             insertStatement(sql, false);
           }}
           onClose={() => setCreating(null)}
+          width={layout.detailWidth}
+          onResize={(detailWidth) => updateLayout({ detailWidth })}
+          onResetWidth={() => updateLayout({ detailWidth: defaultLayout().detailWidth })}
+        />
+      )}
+      {historyOpen && (
+        <HistoryPanel
+          session={session}
+          recording={connection?.recordHistory ?? true}
+          onInsert={(sql) => {
+            setHistoryOpen(false);
+            insertStatement(sql, false);
+          }}
+          onRun={(sql) => {
+            setHistoryOpen(false);
+            insertStatement(sql, true);
+          }}
+          onClose={() => setHistoryOpen(false)}
           width={layout.detailWidth}
           onResize={(detailWidth) => updateLayout({ detailWidth })}
           onResetWidth={() => updateLayout({ detailWidth: defaultLayout().detailWidth })}

@@ -1,5 +1,6 @@
 mod ai;
 mod connections;
+mod history;
 mod pg;
 mod snapshot;
 mod sql;
@@ -26,6 +27,11 @@ pub fn run() {
                 .inspect_err(|err| eprintln!("passwords can't be saved: {err}"))
                 .ok();
             app.manage(ConnectionStore::new(path, credentials.clone()));
+            let history = dolmen_core::history::History::open(
+                &app.path().app_data_dir()?.join("history.sqlite"),
+            )
+            .inspect_err(|err| eprintln!("the query history can't be kept: {err}"));
+            app.manage(history::HistoryStore::new(history));
             app.manage(ai::Ai::new(ApiKeys::new(credentials)));
             Ok(())
         })
@@ -61,6 +67,14 @@ pub fn run() {
             ai::ai_key_forget,
             ai::ai_ask,
             ai::ai_cancel,
+            history::history_list,
+            history::history_star,
+            history::history_delete,
+            history::history_clear,
+            history::history_settings,
+            history::history_set_settings,
+            history::editor_load,
+            history::editor_save,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

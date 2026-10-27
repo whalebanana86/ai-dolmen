@@ -1864,3 +1864,106 @@ button.link:hover {
   border: none;
   background: transparent;
 }
+
+/* Query history */
+
+.history-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+
+.history-filters p {
+  margin: 0;
+}
+
+.history-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-list {
+  gap: 6px;
+}
+
+.history-day {
+  margin: 8px 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.history-run {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.history-run.error {
+  border-left: 3px solid var(--danger);
+}
+
+.history-run > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.history-connection {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.history-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.history-run:hover .history-actions,
+.history-run:focus-within .history-actions {
+  opacity: 1;
+}
+
+.history-actions button {
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+.history-run .star {
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--muted);
+}
+
+.history-run .star.starred {
+  color: #e0a800;
+}
+
+.history-sql {
+  max-height: 7.5em;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: default;
+}
+
+.history-error {
+  margin: 0;
+  font-size: 12px;
+}
