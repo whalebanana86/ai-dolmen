@@ -397,6 +397,8 @@ export function errorMessage(error: unknown, t: Messages): string {
           return error.message;
         case "network":
           return t.errors.ai.network(error.message);
+        case "badApiKey":
+          return t.errors.ai.badApiKey(error.message);
         default:
           return t.errors.ai[error.reason];
       }

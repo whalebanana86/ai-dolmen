@@ -32,7 +32,8 @@ export const en = {
     },
     ai: {
       noApiKey: "There's no Anthropic API key yet. Add one in Settings (⚙) to use AI.",
-      badApiKey: "The Anthropic API didn't accept the API key. Check it in Settings (⚙).",
+      badApiKey: (message: string) =>
+        `The Anthropic API didn't accept the API key (${message}). Check it in Settings (⚙).`,
       rateLimited: "Too many requests for this API key's limits. Try again in a moment.",
       unavailable: "The Anthropic API is busy or having trouble. Try again in a moment.",
       declined: "The Anthropic API's safety checks declined this request.",

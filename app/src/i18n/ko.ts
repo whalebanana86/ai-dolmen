@@ -29,7 +29,8 @@ export const ko: Messages = {
     },
     ai: {
       noApiKey: "아직 Anthropic API 키가 없습니다. AI를 쓰려면 설정(⚙)에서 키를 추가해 주세요.",
-      badApiKey: "Anthropic API가 API 키를 받아들이지 않았습니다. 설정(⚙)에서 키를 확인해 주세요.",
+      badApiKey: (message) =>
+        `Anthropic API가 API 키를 받아들이지 않았습니다(${message}). 설정(⚙)에서 키를 확인해 주세요.`,
       rateLimited: "이 API 키의 요청 한도를 넘었습니다. 잠시 후 다시 시도해 주세요.",
       unavailable: "Anthropic API가 바쁘거나 문제가 있습니다. 잠시 후 다시 시도해 주세요.",
       declined: "Anthropic API의 안전 검사가 이 요청을 거절했습니다.",
