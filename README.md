@@ -78,7 +78,8 @@ your consent, and they can go into the editor instead.
 
 The editor has tabs (⌘T), each a console with its own session, so transactions,
 the search path and cancelling stay apart; the schema picker beside the tabs
-shows and sets where the active tab's unqualified names resolve.
+shows and sets the one schema the active tab's unqualified names resolve in;
+other schemas' tables take their schema, as in `public.users`.
 
 **History** (⌘⇧H) lists the statements run on each connection, newest first,
 to search, star, insert into the editor or run again; edits and snapshots

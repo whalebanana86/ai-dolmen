@@ -310,7 +310,7 @@ export const en = {
     rename: "Tab name",
     renameTitle: "Double-click to rename; Ctrl+Tab goes to the next tab",
     schema: "Schema",
-    schemaTitle: "Where this tab's unqualified names resolve: its session's search_path",
+    schemaTitle: "The only schema this tab's unqualified names resolve in (its session's search_path); write other schemas' tables with their schema, as in public.users",
     noSchema: "(none)",
   },
 

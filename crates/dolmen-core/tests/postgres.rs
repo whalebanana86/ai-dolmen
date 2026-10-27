@@ -442,6 +442,14 @@ async fn another_session_keeps_its_own_search_path() {
         .execute("CREATE SCHEMA IF NOT EXISTS tab_test", 0)
         .await
         .unwrap();
+    first
+        .execute(
+            "DROP SCHEMA IF EXISTS tab_other CASCADE; CREATE SCHEMA tab_other; \
+             CREATE TABLE tab_other.elsewhere (id int)",
+            0,
+        )
+        .await
+        .unwrap();
     let second = first.another().await.expect("another session");
     assert_eq!(
         second.set_schema("tab_test").await.unwrap().as_deref(),
@@ -451,5 +459,24 @@ async fn another_session_keeps_its_own_search_path() {
         first.current_schema().await.unwrap().as_deref(),
         Some("public")
     );
-    first.execute("DROP SCHEMA tab_test", 0).await.unwrap();
+
+    // Names resolve in the chosen schema alone; built-ins still work.
+    let err = second
+        .execute("SELECT * FROM elsewhere", 0)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Database { ref code, .. } if code == "42P01"),
+        "{err:?}"
+    );
+    assert!(
+        second
+            .execute("SELECT now(), count(*) FROM tab_other.elsewhere", 0)
+            .await
+            .is_ok()
+    );
+    first
+        .execute("DROP SCHEMA tab_test; DROP SCHEMA tab_other CASCADE", 0)
+        .await
+        .unwrap();
 }

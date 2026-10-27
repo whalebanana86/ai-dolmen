@@ -260,7 +260,7 @@ export const pg = {
   disconnect: (sessionId: number) => invoke<void>("pg_disconnect", { sessionId }),
   /** Another session to the same database, for an editor tab of its own. */
   fork: (sessionId: number) => invoke<SessionInfo>("pg_fork", { sessionId }),
-  /** Makes the session's unqualified names resolve in `schema` (then public); returns where they now do. */
+  /** Makes the session's unqualified names resolve in `schema` alone; returns where they now do. */
   setSchema: (sessionId: number, schema: string) => invoke<string | null>("pg_set_schema", { sessionId, schema }),
   /** The schema the session's unqualified names resolve in first. */
   currentSchema: (sessionId: number) => invoke<string | null>("pg_current_schema", { sessionId }),

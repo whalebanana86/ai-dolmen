@@ -431,15 +431,16 @@ impl Session {
         Session::connect(&self.config).await
     }
 
-    /// Makes unqualified names resolve in `schema`, then `public`, for this
-    /// session, and returns the schema they now resolve in first.
+    /// Makes unqualified names resolve in `schema` alone for this session, so
+    /// a table elsewhere needs its schema written, and returns the schema
+    /// names now resolve in. Built-in types and functions still resolve:
+    /// pg_catalog is always searched.
     pub async fn set_schema(&self, schema: &str) -> Result<Option<String>, Error> {
-        let mut path = crate::postgres::ddl::quote_ident(schema);
-        if schema != "public" {
-            path.push_str(", public");
-        }
         self.client
-            .batch_execute(&format!("SET search_path TO {path}"))
+            .batch_execute(&format!(
+                "SET search_path TO {}",
+                crate::postgres::ddl::quote_ident(schema)
+            ))
             .await?;
         self.current_schema().await
     }

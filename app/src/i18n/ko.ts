@@ -304,7 +304,7 @@ export const ko: Messages = {
     rename: "탭 이름",
     renameTitle: "두 번 클릭하면 이름을 바꿉니다. Ctrl+Tab으로 다음 탭으로 갑니다",
     schema: "스키마",
-    schemaTitle: "이 탭에서 스키마 없이 쓴 이름을 찾는 곳: 탭 세션의 search_path",
+    schemaTitle: "이 탭에서 스키마 없이 쓴 이름은 이 스키마에서만 찾습니다(탭 세션의 search_path). 다른 스키마의 테이블은 public.users처럼 스키마를 붙여 쓰세요",
     noSchema: "(없음)",
   },
 
