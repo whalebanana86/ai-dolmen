@@ -18,6 +18,8 @@ import {
   sqlText,
 } from "./api";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
+import { defaultLayout, useLayout } from "./layout";
+import { Splitter } from "./Splitter";
 import { ResultView } from "./ResultView";
 import { SchemaTree } from "./SchemaTree";
 import { SettingsButton, SettingsDialog } from "./SettingsDialog";
@@ -70,6 +72,22 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   const runCount = useRef(0);
   const { conversation, ask, stop: stopAi, clear: clearAi } = useAi(session.id);
   const [aiPrompting, setAiPrompting] = useState(false);
+  const { layout, update: updateLayout, toggle: togglePanel } = useLayout();
+  const mainRef = useRef<HTMLDivElement>(null);
+
+  // ⌘B and ⌘J show and hide the schema tree and the results, as in VS Code.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      const panel = { b: "treeVisible", j: "resultsVisible" } as const;
+      const key = e.key.toLowerCase();
+      if (key !== "b" && key !== "j") return;
+      e.preventDefault();
+      togglePanel(panel[key]);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const refreshSchema = useCallback(() => {
     setLoadingSchema(true);
@@ -172,6 +190,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     if (ranges.length === 0) return;
 
     setRunning(true);
+    updateLayout({ resultsVisible: true });
     const started = performance.now();
     const results: StatementResult[] = [];
     let failure: Outcome["failure"] = null;
@@ -286,6 +305,24 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       <div className="toolbar">
         <strong>Dolmen</strong>
         <span className="muted">PostgreSQL {session.serverVersion}</span>
+        <button
+          className="icon-button panel-toggle"
+          onClick={() => togglePanel("treeVisible")}
+          aria-pressed={layout.treeVisible}
+          title={t.workspace.toggleTree(layout.treeVisible)}
+          aria-label={t.workspace.toggleTree(layout.treeVisible)}
+        >
+          <PanelIcon side="left" shown={layout.treeVisible} />
+        </button>
+        <button
+          className="icon-button panel-toggle"
+          onClick={() => togglePanel("resultsVisible")}
+          aria-pressed={layout.resultsVisible}
+          title={t.workspace.toggleResults(layout.resultsVisible)}
+          aria-label={t.workspace.toggleResults(layout.resultsVisible)}
+        >
+          <PanelIcon side="bottom" shown={layout.resultsVisible} />
+        </button>
         <span className="spacer" />
         {running ? (
           <button onClick={cancel}>{t.common.cancel}</button>
@@ -315,12 +352,26 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       </div>
 
       <div className="workspace-body">
-        <SchemaTree
-          introspection={introspection}
-          loading={loadingSchema}
-          actions={{ insert: insertStatement, refresh: refreshSchema, showDdl }}
-        />
-        <div className="workspace-main">
+        {layout.treeVisible && (
+          <>
+            <SchemaTree
+              introspection={introspection}
+              loading={loadingSchema}
+              actions={{ insert: insertStatement, refresh: refreshSchema, showDdl }}
+              width={layout.treeWidth}
+            />
+            <Splitter
+              orientation="vertical"
+              size={layout.treeWidth}
+              bounds={() => [160, window.innerWidth * 0.6]}
+              grows={1}
+              onResize={(treeWidth) => updateLayout({ treeWidth })}
+              onReset={() => updateLayout({ treeWidth: defaultLayout().treeWidth })}
+              label={t.workspace.resizeTree}
+            />
+          </>
+        )}
+        <div className="workspace-main" ref={mainRef}>
           <SqlEditor
             initialValue={INITIAL_SQL}
             introspection={introspection}
@@ -328,7 +379,19 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             onAsk={() => setAiPrompting(true)}
             onChange={(value) => setHasText(value.trim() !== "")}
             viewRef={viewRef}
+            height={layout.resultsVisible ? layout.editorHeight : null}
           />
+          {layout.resultsVisible && (
+            <Splitter
+              orientation="horizontal"
+              size={layout.editorHeight}
+              bounds={() => [80, (mainRef.current?.clientHeight ?? window.innerHeight) - 120]}
+              grows={1}
+              onResize={(editorHeight) => updateLayout({ editorHeight })}
+              onReset={() => updateLayout({ editorHeight: defaultLayout().editorHeight })}
+              label={t.workspace.resizeEditor}
+            />
+          )}
 
           {(aiPrompting || conversation) && (
             <AiPanel
@@ -344,27 +407,29 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             />
           )}
 
-          <section className="results">
-            {running && <p className="muted status">{t.workspace.running}</p>}
-            {!running && outcome && (
-              <>
-                <p className="muted status">
-                  {t.workspace.runStatus(
-                    outcome.firstLine,
-                    outcome.results.length,
-                    outcome.statementCount,
-                    Math.round(outcome.elapsedMs),
+          {layout.resultsVisible && (
+            <section className="results">
+              {running && <p className="muted status">{t.workspace.running}</p>}
+              {!running && outcome && (
+                <>
+                  <p className="muted status">
+                    {t.workspace.runStatus(
+                      outcome.firstLine,
+                      outcome.results.length,
+                      outcome.statementCount,
+                      Math.round(outcome.elapsedMs),
+                    )}
+                  </p>
+                  {outcome.results.map((result, index) => (
+                    <ResultView key={`${outcome.runId}-${index}`} index={index} result={result} />
+                  ))}
+                  {outcome.failure && (
+                    <ErrorView {...outcome.failure} onFix={() => fixWithAi(outcome.failure!)} />
                   )}
-                </p>
-                {outcome.results.map((result, index) => (
-                  <ResultView key={`${outcome.runId}-${index}`} index={index} result={result} />
-                ))}
-                {outcome.failure && (
-                  <ErrorView {...outcome.failure} onFix={() => fixWithAi(outcome.failure!)} />
-                )}
-              </>
-            )}
-          </section>
+                </>
+              )}
+            </section>
+          )}
         </div>
       </div>
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
@@ -386,9 +451,29 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           onRefresh={refreshSnapshot}
           onDatabaseChanged={refreshSchema}
           onClose={() => setSnapshotOpen(false)}
+          width={layout.snapshotWidth}
+          onResize={(snapshotWidth) => updateLayout({ snapshotWidth })}
+          onResetWidth={() => updateLayout({ snapshotWidth: defaultLayout().snapshotWidth })}
         />
       )}
     </main>
+  );
+}
+
+/** A panel-layout icon with the left or bottom panel filled in while it shows. */
+function PanelIcon({ side, shown }: { side: "left" | "bottom"; shown: boolean }) {
+  const panel =
+    side === "left" ? { x: 2, y: 3, width: 4.5, height: 10 } : { x: 2, y: 9, width: 12, height: 4 };
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" />
+      {side === "left" ? (
+        <line x1="6.5" y1="2.5" x2="6.5" y2="13.5" stroke="currentColor" />
+      ) : (
+        <line x1="1.5" y1="9.5" x2="14.5" y2="9.5" stroke="currentColor" />
+      )}
+      {shown && <rect {...panel} rx="1" fill="currentColor" opacity="0.45" />}
+    </svg>
   );
 }
 

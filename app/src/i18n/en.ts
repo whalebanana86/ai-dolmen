@@ -99,6 +99,11 @@ export const en = {
     hint: "Hint:",
     locationNotSaved: (error: string) =>
       `The location is in use but couldn't be saved with the connection: ${error}`,
+    toggleTree: (shown: boolean) => `${shown ? "Hide" : "Show"} the schema tree (⌘B)`,
+    toggleResults: (shown: boolean) => `${shown ? "Hide" : "Show"} the results (⌘J)`,
+    resizeTree: "Drag to resize the schema tree; double-click to reset",
+    resizeEditor: "Drag to resize the editor and results; double-click to reset",
+    resizePanel: "Drag to resize the panel; double-click to reset",
   },
 
   results: {

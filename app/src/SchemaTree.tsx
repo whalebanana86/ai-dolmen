@@ -28,6 +28,8 @@ interface Props {
   introspection: Introspection | null;
   loading: boolean;
   actions: TreeActions;
+  /** In px. */
+  width: number;
 }
 
 type OpenMenu = (event: MouseEvent, items: MenuItem[]) => void;
@@ -37,7 +39,7 @@ type OpenMenu = (event: MouseEvent, items: MenuItem[]) => void;
  * sequences and enums, and each table's columns, constraints and indexes.
  * Right-click a node for its actions; double-click a table or view to query it.
  */
-export function SchemaTree({ introspection, loading, actions }: Props) {
+export function SchemaTree({ introspection, loading, actions, width }: Props) {
   const t = useT();
   const [filter, setFilter] = useState("");
   // Node keys the user toggled; the default schema starts open, everything else closed.
@@ -63,7 +65,7 @@ export function SchemaTree({ introspection, loading, actions }: Props) {
   const sql = new SqlFor(defaultSchema);
 
   return (
-    <aside className="schema-tree">
+    <aside className="schema-tree" style={{ width }}>
       <div className="schema-tree-header">
         <input
           className="schema-filter"

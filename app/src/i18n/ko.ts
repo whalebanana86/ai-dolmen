@@ -94,6 +94,11 @@ export const ko: Messages = {
     errorLocation: (line, column) => `${line}행 ${column}열`,
     hint: "힌트:",
     locationNotSaved: (error) => `위치는 사용 중이지만 연결 정보에 저장하지 못했습니다: ${error}`,
+    toggleTree: (shown) => `스키마 트리 ${shown ? "숨기기" : "보이기"} (⌘B)`,
+    toggleResults: (shown) => `결과 ${shown ? "숨기기" : "보이기"} (⌘J)`,
+    resizeTree: "끌어서 스키마 트리 너비 조절, 두 번 클릭하면 원래대로",
+    resizeEditor: "끌어서 편집기와 결과 높이 조절, 두 번 클릭하면 원래대로",
+    resizePanel: "끌어서 패널 너비 조절, 두 번 클릭하면 원래대로",
   },
 
   results: {

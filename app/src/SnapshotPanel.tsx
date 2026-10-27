@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Commit, FileChange, Repository, SnapshotRemote, SnapshotStatus, errorMessage, snapshots } from "./api";
 import { ApplyDialog } from "./ApplyDialog";
 import { GitGraph } from "./GitGraph";
+import { Splitter } from "./Splitter";
 import type { Messages } from "./i18n/en";
 import { useT } from "./settings";
 
@@ -29,6 +30,10 @@ interface Props {
   /** Called after a snapshot was applied to the database. */
   onDatabaseChanged: () => void;
   onClose: () => void;
+  /** The panel's width in px, which the user can drag. */
+  width: number;
+  onResize: (width: number) => void;
+  onResetWidth: () => void;
 }
 
 type Tab = "changes" | "history";
@@ -54,6 +59,9 @@ export function SnapshotPanel({
   onRefresh,
   onDatabaseChanged,
   onClose,
+  width,
+  onResize,
+  onResetWidth,
 }: Props) {
   const t = useT();
   const [tab, setTab] = useState<Tab>("changes");
@@ -135,7 +143,16 @@ export function SnapshotPanel({
 
   return (
     <div className="panel-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside className="side-panel" role="dialog" aria-label={t.snapshot.title}>
+      <aside className="side-panel" role="dialog" aria-label={t.snapshot.title} style={{ width: `min(${width}px, 100%)` }}>
+        <Splitter
+          orientation="vertical"
+          size={width}
+          bounds={() => [400, window.innerWidth - 80]}
+          grows={-1}
+          onResize={onResize}
+          onReset={onResetWidth}
+          label={t.workspace.resizePanel}
+        />
         <header className="side-panel-header">
           <strong>{t.snapshot.title}</strong>
           {dir && (

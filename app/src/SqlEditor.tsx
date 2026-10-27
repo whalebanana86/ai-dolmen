@@ -18,9 +18,11 @@ interface Props {
   onChange: (value: string) => void;
   /** Set to the editor view, so the parent can read text and selection when running. */
   viewRef: { current: EditorView | null };
+  /** In px, or null to fill the space below the toolbar. */
+  height: number | null;
 }
 
-export function SqlEditor({ initialValue, introspection, onRun, onAsk, onChange, viewRef }: Props) {
+export function SqlEditor({ initialValue, introspection, onRun, onAsk, onChange, viewRef, height }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const t = useT();
   const [language] = useState(() => new Compartment());
@@ -84,7 +86,13 @@ export function SqlEditor({ initialValue, introspection, onRun, onAsk, onChange,
     viewRef.current?.dispatch({ effects: phrases.reconfigure(EditorState.phrases.of(t.editorPhrases)) });
   }, [t, phrases, viewRef]);
 
-  return <div ref={parentRef} className="editor" />;
+  return (
+    <div
+      ref={parentRef}
+      className={height === null ? "editor fill" : "editor"}
+      style={height === null ? undefined : { height }}
+    />
+  );
 }
 
 function sqlLanguage(introspection: Introspection | null) {
