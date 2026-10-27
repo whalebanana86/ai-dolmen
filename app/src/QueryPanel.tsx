@@ -20,12 +20,14 @@ import {
   sqlText,
 } from "./api";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
+import { EnvironmentBadge } from "./ConnectionForm";
 import { CreatePanel, DetailPanel } from "./DetailPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { HistoryPanel } from "./HistoryPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
 import { ResultView, StatementLine } from "./ResultView";
+import { RiskDialog, RiskyStatement } from "./RiskDialog";
 import { SchemaTree } from "./SchemaTree";
 import { SettingsButton, SettingsDialog } from "./SettingsDialog";
 import { SnapshotPanel } from "./SnapshotPanel";
@@ -87,6 +89,14 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     tRef.current = t;
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Whether the connection's sessions refuse writes; every tab's session follows it.
+  const [readOnly, setReadOnly] = useState(session.readOnly);
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  const [confirmingWritable, setConfirmingWritable] = useState(false);
+  const [lockBusy, setLockBusy] = useState(false);
+  // Risky statements waiting for the user to say whether to run them.
+  const [risky, setRisky] = useState<{ statements: RiskyStatement[]; decide: (run: boolean) => void } | null>(null);
   // Editor tabs, each a console with its own session, kept per connection.
   const editorKey = session.savedId ?? session.label;
   const [tabs, setTabs] = useState<SqlTab[] | null>(null);
@@ -454,6 +464,29 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         statement: { statement: sql.slice(first.start, first.end), start: first.start, end: first.end },
       };
     }
+    // Ask before statements that change every row or drop something. A
+    // read-only session refuses them anyway.
+    if (sessionId !== null && !readOnlyRef.current) {
+      const statements = ranges.map((range) => sql.slice(range.start, range.end));
+      let proceed = false;
+      try {
+        const found = (await pg.assess(sessionId, statements)).flatMap((assessment, i) =>
+          assessment ? [{ statement: statements[i], assessment }] : [],
+        );
+        proceed =
+          found.length === 0 ||
+          (await new Promise<boolean>((decide) => setRisky({ statements: found, decide })));
+      } catch (error) {
+        const first = ranges[0];
+        failure = { error, location: null, statement: { statement: statements[0], start: first.start, end: first.end } };
+      }
+      if (!proceed && failure === null) {
+        updateTab(tabId, () => ({ running: false }));
+        view.focus();
+        return;
+      }
+      if (!proceed) sessionId = null;
+    }
     // One statement at a time, so a failure doesn't roll back the ones before it.
     for (const range of sessionId === null ? [] : ranges) {
       const statement = sql.slice(range.start, range.end);
@@ -581,6 +614,25 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     }
   }
 
+  /** Locks or unlocks writing; unlocking production takes a second click. */
+  async function toggleReadOnly() {
+    const next = !readOnly;
+    if (!next && session.environment === "production" && !confirmingWritable) {
+      setConfirmingWritable(true);
+      return;
+    }
+    setConfirmingWritable(false);
+    setLockBusy(true);
+    try {
+      await pg.setReadOnly(session.id, next);
+      setReadOnly(next);
+    } catch (error) {
+      console.error("changing read-only failed", error);
+    } finally {
+      setLockBusy(false);
+    }
+  }
+
   async function disconnect() {
     saveTabs();
     for (const tab of tabsRef.current ?? []) {
@@ -591,10 +643,25 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   }
 
   return (
-    <main className="workspace">
+    <main className={session.environment ? `workspace environment-${session.environment}` : "workspace"}>
       <div className="toolbar">
         <strong>Dolmen</strong>
+        {session.environment && <EnvironmentBadge environment={session.environment} />}
+        <span className="toolbar-label" title={session.address}>
+          {session.label}
+        </span>
         <span className="muted">PostgreSQL {session.serverVersion}</span>
+        <button
+          className={`lock-toggle ${readOnly ? "locked" : "unlocked"}`}
+          onClick={toggleReadOnly}
+          onBlur={() => setConfirmingWritable(false)}
+          disabled={lockBusy}
+          aria-pressed={readOnly}
+          title={readOnly ? t.workspace.readOnlyTitle : t.workspace.writableTitle}
+        >
+          <LockIcon locked={readOnly} />
+          {confirmingWritable ? t.workspace.confirmWritable : readOnly ? t.workspace.readOnly : t.workspace.writable}
+        </button>
         <button
           className="icon-button panel-toggle"
           onClick={() => togglePanel("treeVisible")}
@@ -871,6 +938,20 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         />
       )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {risky && (
+        <RiskDialog
+          risky={risky.statements}
+          target={{ label: session.label, address: session.address, environment: session.environment }}
+          onRun={() => {
+            risky.decide(true);
+            setRisky(null);
+          }}
+          onCancel={() => {
+            risky.decide(false);
+            setRisky(null);
+          }}
+        />
+      )}
       {snapshotOpen && (
         <SnapshotPanel
           sessionId={session.id}
@@ -901,6 +982,20 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
 }
 
 /** A panel-layout icon with the left or bottom panel filled in while it shows. */
+function LockIcon({ locked }: { locked: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="currentColor" />
+      <path
+        d={locked ? "M5 7V5a3 3 0 0 1 6 0v2" : "M5 7V5a3 3 0 0 1 5.8-1"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
 function PanelIcon({ side, shown }: { side: "left" | "bottom"; shown: boolean }) {
   const panel =
     side === "left" ? { x: 2, y: 3, width: 4.5, height: 10 } : { x: 2, y: 9, width: 12, height: 4 };
@@ -990,8 +1085,11 @@ function ErrorView({
           {t.workspace.hint} {db.hint}
         </p>
       )}
-      {/* Only the server's errors are about the SQL; connection problems aren't. */}
-      {db && db.code !== "57014" && (
+      {/* read_only_sql_transaction */}
+      {db?.code === "25006" && <p>{t.workspace.readOnlyHint}</p>}
+      {/* Only the server's errors are about the SQL; connection problems,
+          cancelling and the read-only lock aren't. */}
+      {db && db.code !== "57014" && db.code !== "25006" && (
         <div className="actions">
           <button onClick={onFix}>{t.ai.fix}</button>
         </div>

@@ -167,6 +167,18 @@ pub enum SslMode {
     VerifyFull,
 }
 
+/// How many rows a statement would touch, about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowEstimate {
+    pub rows: i64,
+    /// The count stopped at [`COUNT_LIMIT`]: there are at least that many.
+    pub at_least: bool,
+}
+
+/// Where counting rows for an estimate stops.
+pub const COUNT_LIMIT: i64 = 100_000;
+
 /// The outcome of one statement in an execution.
 #[derive(Debug, Serialize)]
 #[serde(
@@ -429,6 +441,88 @@ impl Session {
     /// path and cancellation.
     pub async fn another(&self) -> Result<Session, Error> {
         Session::connect(&self.config).await
+    }
+
+    /// Makes the session's transactions read-only, or lets them write again.
+    /// A guard against mistakes rather than a permission: SQL can still
+    /// turn it off, as with `BEGIN READ WRITE`.
+    pub async fn set_read_only(&self, read_only: bool) -> Result<(), Error> {
+        let value = if read_only { "on" } else { "off" };
+        self.client
+            .batch_execute(&format!("SET default_transaction_read_only = {value}"))
+            .await?;
+        Ok(())
+    }
+
+    /// About how many rows a risky statement touches: the planner's estimate
+    /// for an UPDATE or DELETE (EXPLAIN, which runs nothing), the table's
+    /// statistics otherwise, else a count stopped at [`COUNT_LIMIT`]. `None`
+    /// when it can't tell, say inside a failed transaction.
+    pub async fn estimate(&self, statement: &str, risk: &crate::sql::Risk) -> Option<RowEstimate> {
+        use crate::sql::Risk;
+        let table = match risk {
+            Risk::EveryRow { .. } => {
+                let explain = format!(
+                    "EXPLAIN (FORMAT JSON) {}",
+                    statement.trim().trim_end_matches(';')
+                );
+                // The extended protocol takes one statement, so nothing that
+                // slipped past the statement splitter runs before the user agrees.
+                let plan: serde_json::Value = self
+                    .client
+                    .query_one(&explain, &[])
+                    .await
+                    .ok()?
+                    .try_get(0)
+                    .ok()?;
+                let top = &plan[0]["Plan"];
+                // A ModifyTable node returns nothing; the rows it changes come from below.
+                let node = if top["Node Type"] == "ModifyTable" {
+                    &top["Plans"][0]
+                } else {
+                    top
+                };
+                return Some(RowEstimate {
+                    rows: node["Plan Rows"].as_f64()? as i64,
+                    at_least: false,
+                });
+            }
+            Risk::Truncate { table } | Risk::DropColumn { table, .. } => table,
+            Risk::Drop {
+                table: Some(table), ..
+            } => table,
+            Risk::Drop { table: None, .. } => return None,
+        };
+        let statistics: Option<i64> = self
+            .client
+            .query_opt(
+                "SELECT CASE WHEN c.reltuples < 0 THEN NULL ELSE c.reltuples::bigint END
+                 FROM pg_catalog.pg_class c WHERE c.oid = pg_catalog.to_regclass($1)",
+                &[table],
+            )
+            .await
+            .ok()??
+            .get(0);
+        if let Some(rows) = statistics.filter(|rows| *rows > 0) {
+            return Some(RowEstimate {
+                rows,
+                at_least: false,
+            });
+        }
+        // Never analyzed: count, but stop early on a big table.
+        let rows: i64 = self
+            .client
+            .query_one(
+                &format!("SELECT count(*) FROM (SELECT 1 FROM {table} LIMIT {COUNT_LIMIT}) rows"),
+                &[],
+            )
+            .await
+            .ok()?
+            .get(0);
+        Some(RowEstimate {
+            rows,
+            at_least: rows >= COUNT_LIMIT,
+        })
     }
 
     /// Makes unqualified names resolve in `schema` alone for this session, so

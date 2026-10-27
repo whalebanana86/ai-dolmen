@@ -50,6 +50,20 @@ pub struct SavedConnection {
     /// looks like, so the user can say so explicitly either way.
     #[serde(default)]
     pub allow_snapshot_apply: Option<bool>,
+    /// What the database is for, shown as a color; production gets stricter defaults.
+    #[serde(default)]
+    pub environment: Option<Environment>,
+    /// Whether sessions start read-only. Unset, only production's do.
+    #[serde(default)]
+    pub read_only: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Environment {
+    Development,
+    Staging,
+    Production,
 }
 
 fn record_by_default() -> bool {

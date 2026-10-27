@@ -7,8 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dolmen_core::Error;
-use dolmen_core::postgres::{ConnectConfig, Session, SslMode, StatementResult};
+use dolmen_core::postgres::{ConnectConfig, RowEstimate, Session, SslMode, StatementResult};
 use dolmen_core::schema::{Column, ConstraintKind, FunctionKind, Generated, Identity, TableKind};
+use dolmen_core::sql;
 
 #[macro_use]
 mod common;
@@ -393,6 +394,92 @@ async fn reports_the_current_schema() {
     assert_eq!(
         session.current_schema().await.unwrap().as_deref(),
         Some("public")
+    );
+}
+
+#[tokio::test]
+async fn read_only_sessions_refuse_writes_but_explain() {
+    let config = config_or_skip!();
+    let _exclusive = exclusive().await;
+    let session = connect(&config).await;
+    // Not a temporary table: read-only transactions may still write those.
+    execute(
+        &session,
+        "DROP TABLE IF EXISTS guarded; CREATE TABLE guarded (id int); \
+         INSERT INTO guarded VALUES (1), (2)",
+    )
+    .await;
+    session.set_read_only(true).await.unwrap();
+    match session.execute("DELETE FROM guarded", 10).await {
+        Err(Error::Database { code, .. }) => assert_eq!(code, "25006"),
+        other => panic!("expected a read-only error, got {other:?}"),
+    }
+    // Estimates still work: EXPLAIN runs nothing.
+    let risk = sql::risk("DELETE FROM guarded").unwrap();
+    let estimate = session.estimate("DELETE FROM guarded", &risk).await;
+    assert!(estimate.is_some(), "no estimate in a read-only session");
+    session.set_read_only(false).await.unwrap();
+    let results = execute(&session, "DELETE FROM guarded").await;
+    assert!(matches!(
+        results[..],
+        [StatementResult::Command { rows_affected: 2 }]
+    ));
+    execute(&session, "DROP TABLE guarded").await;
+}
+
+#[tokio::test]
+async fn estimates_the_rows_a_risky_statement_touches() {
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    execute(
+        &session,
+        "CREATE TEMP TABLE counted AS SELECT g AS id FROM generate_series(1, 500) g; \
+         CREATE TEMP TABLE unanalyzed (id int); \
+         INSERT INTO unanalyzed SELECT generate_series(1, 7); ANALYZE counted",
+    )
+    .await;
+    let estimate = |statement: &'static str| {
+        let session = &session;
+        async move {
+            let risk = sql::risk(statement).expect("risky");
+            session.estimate(statement, &risk).await
+        }
+    };
+    assert_eq!(
+        estimate("DELETE FROM counted").await,
+        Some(RowEstimate {
+            rows: 500,
+            at_least: false
+        })
+    );
+    assert_eq!(
+        estimate("UPDATE counted SET id = id + 1;")
+            .await
+            .map(|e| e.rows),
+        Some(500)
+    );
+    assert_eq!(
+        estimate("TRUNCATE counted").await.map(|e| e.rows),
+        Some(500)
+    );
+    // Never analyzed: counted instead.
+    assert_eq!(
+        estimate("DROP TABLE unanalyzed").await,
+        Some(RowEstimate {
+            rows: 7,
+            at_least: false
+        })
+    );
+    assert_eq!(estimate("TRUNCATE no_such_table").await, None);
+    assert_eq!(estimate("DROP FUNCTION nothing()").await, None);
+    // A second statement the splitter missed is refused, not run.
+    assert_eq!(
+        estimate("DELETE FROM counted; DROP TABLE unanalyzed").await,
+        None
+    );
+    assert_eq!(
+        estimate("TRUNCATE unanalyzed").await.map(|e| e.rows),
+        Some(7)
     );
 }
 

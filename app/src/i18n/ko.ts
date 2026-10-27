@@ -26,6 +26,7 @@ export const ko: Messages = {
         "이 스냅샷에는 dolmen-model.json이 없어 적용할 수 없습니다. Dolmen이 모델을 저장하기 전에 만든 스냅샷입니다. 새 스냅샷을 쓰고 커밋하면 나중에 적용할 수 있습니다.",
       badSnapshotPath: "스냅샷 폴더는 db/schema처럼 저장소 안의 경로여야 합니다.",
       uncommittedChanges: "스냅샷 폴더에 커밋하지 않은 변경이 있습니다. 커밋하거나 되돌린 뒤 브랜치를 바꿔 주세요.",
+      readOnly: "읽기 전용 연결입니다. 먼저 툴바의 자물쇠로 쓰기를 허용하세요.",
     },
     ai: {
       noApiKey: "아직 Anthropic API 키가 없습니다. AI를 쓰려면 설정(⚙)에서 키를 추가해 주세요.",
@@ -97,6 +98,12 @@ export const ko: Messages = {
       require: "Require는 암호화는 하지만 인증서를 확인하지 않아 중간의 공격자가 내용을 볼 수 있습니다. Verify full을 쓰세요.",
     },
     recordHistoryTitle: "운영 DB처럼 SQL을 이 컴퓨터에 남기면 안 되는 연결은 끄세요",
+    environment: "환경",
+    noEnvironment: "없음",
+    environmentTitle:
+      "작업 화면에 색으로 표시됩니다. 아래에서 따로 정하지 않으면 운영은 읽기 전용으로 시작하고 스냅샷으로 바꿀 수 없습니다.",
+    readOnly: "읽기 전용으로 시작",
+    readOnlyTitle: "툴바의 자물쇠로 쓰기를 허용하기 전까지 데이터를 바꾸는 문장은 거부됩니다. 운영은 기본으로 켜집니다.",
     confirmDelete: "한 번 더 누르면 삭제",
     connect: "연결",
     connecting: "연결 중…",
@@ -113,6 +120,12 @@ export const ko: Messages = {
     running: "실행 중…",
     runStatus: (line, done, total, ms) => `${line}행 · 문장 ${total}개 중 ${done}개 · ${ms} ms`,
     errorLocation: (line, column) => `${line}행 ${column}열`,
+    readOnly: "읽기 전용",
+    writable: "쓰기 가능",
+    readOnlyTitle: "데이터를 바꾸는 문장은 거부됩니다. 누르면 쓰기를 허용합니다.",
+    writableTitle: "데이터를 바꿀 수 있습니다. 누르면 읽기 전용으로 바꿉니다.",
+    confirmWritable: "한 번 더 누르면 운영 DB 쓰기 허용",
+    readOnlyHint: "읽기 전용 연결입니다. 데이터를 바꾸려면 툴바의 자물쇠로 쓰기를 허용하세요.",
     hint: "힌트:",
     locationNotSaved: (error) => `위치는 사용 중이지만 연결 정보에 저장하지 못했습니다: ${error}`,
     toggleTree: (shown) => `스키마 트리 ${shown ? "숨기기" : "보이기"} (⌘B)`,
@@ -447,6 +460,26 @@ export const ko: Messages = {
 
   graph: {
     committedBy: (author, date) => `${author}, ${date}`,
+  },
+
+  environments: {
+    development: "개발",
+    staging: "스테이징",
+    production: "운영",
+  },
+
+  risk: {
+    title: "데이터를 지우는 문장을 실행할까요?",
+    target: (label, address) => `실행할 곳: ${label} (${address})`,
+    rows: (rows, atLeast) => (atLeast ? `${count(rows, "행")} 이상` : `약 ${count(rows, "행")}`),
+    deleteAll: (table, rows) => `WHERE 없는 DELETE: ${table}의 모든 행을 지웁니다${rows ? ` (${rows})` : ""}.`,
+    updateAll: (table, rows) => `WHERE 없는 UPDATE: ${table}의 모든 행을 바꿉니다${rows ? ` (${rows})` : ""}.`,
+    truncate: (table, rows) => `TRUNCATE: ${table} 테이블을 비웁니다${rows ? ` (${rows})` : ""}.`,
+    drop: (object, rows) => `DROP ${object}: 객체${rows ? `와 데이터 ${rows}` : ""}이(가) 사라집니다.`,
+    dropColumn: (table, column, rows) =>
+      `${table}의 ${column} 컬럼과 그 값${rows ? ` ${rows}` : ""}이(가) 사라집니다.`,
+    run: "그래도 실행",
+    runOnProduction: "운영 DB에서 실행",
   },
 
   editorPhrases: {

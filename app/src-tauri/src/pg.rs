@@ -4,12 +4,13 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use dolmen_core::connections::ConnectionStore;
+use dolmen_core::connections::{ConnectionStore, Environment};
 use dolmen_core::history::Source;
 use dolmen_core::postgres::edit::{self, Edit};
 use dolmen_core::postgres::migrate::Plan;
-use dolmen_core::postgres::{ConnectConfig, Session, StatementResult};
+use dolmen_core::postgres::{ConnectConfig, RowEstimate, Session, StatementResult};
 use dolmen_core::schema::{Database, ForeignKey};
+use dolmen_core::sql::{self, Risk};
 use dolmen_core::{Error, Refusal};
 use serde::Serialize;
 use tauri::State;
@@ -32,6 +33,10 @@ struct Open {
     connection: history::Connection,
     /// Whether snapshot plans may change this database.
     apply_allowed: bool,
+    /// The session the user connected, which the tabs' sessions were opened from.
+    family: u64,
+    environment: Option<Environment>,
+    read_only: bool,
 }
 
 impl Sessions {
@@ -52,6 +57,24 @@ impl Sessions {
             .unwrap()
             .get(&id)
             .is_some_and(|open| open.apply_allowed)
+    }
+
+    /// Refuses changes while the session is read-only.
+    pub(crate) fn check_writable(&self, id: u64) -> Result<(), Error> {
+        let read_only = self
+            .open
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|open| open.read_only);
+        if read_only {
+            return Err(Error::Refused {
+                reason: Refusal::ReadOnly,
+                message: "The connection is read-only; allow writing from the toolbar first."
+                    .into(),
+            });
+        }
+        Ok(())
     }
 
     /// The session's connection, as the query history records it.
@@ -76,10 +99,15 @@ pub struct SessionInfo {
     label: String,
     /// user@host:port/database, to say which server something will change.
     address: String,
+    environment: Option<Environment>,
+    /// Whether its transactions are read-only for now.
+    read_only: bool,
 }
 
-/// Connects with `config`. Without a password in `config`, the stored password of
-/// the saved connection `saved_id` is used, so it never has to reach the UI.
+/// Connects with `config`. The saved connection `saved_id` lends its settings
+/// (environment, read-only, history, snapshots) when `config` is still its
+/// server, and its stored password when `config` has none, so the password
+/// never has to reach the UI.
 #[tauri::command]
 pub async fn pg_connect(
     mut config: ConnectConfig,
@@ -91,23 +119,35 @@ pub async fn pg_connect(
         Some(id) => connections.list()?.into_iter().find(|c| &c.id == id),
         None => None,
     };
-    // The stored password goes only to the server it was saved for: a form
-    // edited without saving could otherwise send it somewhere else.
-    if let (None, Some(saved)) = (&config.password, &saved) {
-        let same_server = saved.host == config.host
+    // The stored password and settings go only with the server they were saved
+    // for: a form edited without saving could otherwise send the password
+    // somewhere else, or let snapshots change a database they shouldn't.
+    let saved = saved.filter(|saved| {
+        saved.host == config.host
             && saved.port == config.port
             && saved.user == config.user
-            && saved.database == config.database;
-        if same_server {
-            config.password = connections.password(&saved.id)?;
-        }
+            && saved.database == config.database
+    });
+    if let (None, Some(saved)) = (&config.password, &saved) {
+        config.password = connections.password(&saved.id)?;
     }
     let session = Session::connect(&config).await?;
     let id = sessions.next_id.fetch_add(1, Ordering::Relaxed);
+    let environment = saved.as_ref().and_then(|c| c.environment);
+    let production = environment == Some(Environment::Production);
+    // Production is read-only and takes no snapshot plans unless its connection
+    // says otherwise.
+    let read_only = saved
+        .as_ref()
+        .and_then(|c| c.read_only)
+        .unwrap_or(production);
+    if read_only {
+        session.set_read_only(true).await?;
+    }
     let apply_allowed = saved
         .as_ref()
         .and_then(|c| c.allow_snapshot_apply)
-        .unwrap_or_else(|| config.is_local());
+        .unwrap_or_else(|| config.is_local() && !production);
     let address = format!(
         "{}@{}:{}/{}",
         config.user, config.host, config.port, config.database
@@ -132,6 +172,8 @@ pub async fn pg_connect(
         saved_id: connection.saved_id.clone(),
         label: connection.label.clone(),
         address,
+        environment,
+        read_only,
     };
     sessions.open.lock().unwrap().insert(
         id,
@@ -139,25 +181,35 @@ pub async fn pg_connect(
             session: Arc::new(session),
             connection,
             apply_allowed,
+            family: id,
+            environment,
+            read_only,
         },
     );
     Ok(info)
 }
 
 /// Opens another session to the session's database, for an editor tab of its
-/// own: separate transactions, search path and cancelling.
+/// own: separate transactions, search path and cancelling. It shares the
+/// session's read-only state.
 #[tauri::command]
 pub async fn pg_fork(session_id: u64, sessions: State<'_, Sessions>) -> Result<SessionInfo, Error> {
-    let (original, connection, apply_allowed) = {
+    let (original, connection, apply_allowed, family, environment, read_only) = {
         let open = sessions.open.lock().unwrap();
         let open = open.get(&session_id).ok_or(Error::Closed)?;
         (
             Arc::clone(&open.session),
             open.connection.clone(),
             open.apply_allowed,
+            open.family,
+            open.environment,
+            open.read_only,
         )
     };
     let session = original.another().await?;
+    if read_only {
+        session.set_read_only(true).await?;
+    }
     let id = sessions.next_id.fetch_add(1, Ordering::Relaxed);
     let info = SessionInfo {
         id,
@@ -166,6 +218,8 @@ pub async fn pg_fork(session_id: u64, sessions: State<'_, Sessions>) -> Result<S
         saved_id: connection.saved_id.clone(),
         label: connection.label.clone(),
         address: session_address(&original),
+        environment,
+        read_only,
     };
     sessions.open.lock().unwrap().insert(
         id,
@@ -173,9 +227,68 @@ pub async fn pg_fork(session_id: u64, sessions: State<'_, Sessions>) -> Result<S
             session: Arc::new(session),
             connection,
             apply_allowed,
+            family,
+            environment,
+            read_only,
         },
     );
     Ok(info)
+}
+
+/// Makes the session and every session opened from the same connection (each
+/// tab's) read-only, or lets them write again.
+#[tauri::command]
+pub async fn pg_set_read_only(
+    session_id: u64,
+    read_only: bool,
+    sessions: State<'_, Sessions>,
+) -> Result<(), Error> {
+    let members: Vec<(u64, Arc<Session>)> = {
+        let open = sessions.open.lock().unwrap();
+        let family = open.get(&session_id).ok_or(Error::Closed)?.family;
+        open.iter()
+            .filter(|(_, o)| o.family == family)
+            .map(|(id, o)| (*id, Arc::clone(&o.session)))
+            .collect()
+    };
+    for (id, session) in members {
+        session.set_read_only(read_only).await?;
+        if let Some(open) = sessions.open.lock().unwrap().get_mut(&id) {
+            open.read_only = read_only;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Assessment {
+    risk: Risk,
+    /// About how many rows it touches, when that can be told.
+    estimate: Option<RowEstimate>,
+}
+
+/// What each statement could destroy, with about how many rows, to ask before
+/// running them. Nothing is run but EXPLAIN and row counts.
+#[tauri::command]
+pub async fn pg_assess(
+    session_id: u64,
+    statements: Vec<String>,
+    sessions: State<'_, Sessions>,
+) -> Result<Vec<Option<Assessment>>, Error> {
+    let session = sessions.get(session_id)?;
+    let mut assessments = Vec::with_capacity(statements.len());
+    for statement in &statements {
+        let assessment = match sql::risk(statement) {
+            Some(risk) => Some(Assessment {
+                estimate: session.estimate(statement, &risk).await,
+                risk,
+            }),
+            None => None,
+        };
+        assessments.push(assessment);
+    }
+    Ok(assessments)
 }
 
 /// Sets the schema the session's unqualified names resolve in, and returns it.
@@ -279,6 +392,7 @@ pub async fn object_apply(
     sessions: State<'_, Sessions>,
     history: State<'_, HistoryStore>,
 ) -> Result<(), Error> {
+    sessions.check_writable(session_id)?;
     let session = sessions.get(session_id)?;
     let plan = edit::plan(&session.introspect().await?, &edit)?;
     let refused = |reason, message: &str| Error::Refused {

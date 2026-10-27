@@ -126,6 +126,8 @@ fn saved_connections_use_camel_case() {
         }),
         record_history: false,
         allow_snapshot_apply: Some(true),
+        environment: Some(dolmen_core::connections::Environment::Production),
+        read_only: None,
     };
     let value = serde_json::to_value(&connection).unwrap();
     assert_eq!(
@@ -143,6 +145,8 @@ fn saved_connections_use_camel_case() {
             "snapshotRemote": { "url": "git@github.com:you/schema.git", "path": "db/schema" },
             "recordHistory": false,
             "allowSnapshotApply": true,
+            "environment": "production",
+            "readOnly": null,
         })
     );
     assert_eq!(

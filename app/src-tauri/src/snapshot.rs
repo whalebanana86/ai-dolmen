@@ -249,6 +249,7 @@ pub async fn snapshot_apply(
     history: State<'_, HistoryStore>,
 ) -> Result<(), Error> {
     let session = sessions.get(session_id)?;
+    sessions.check_writable(session_id)?;
     if !sessions.apply_allowed(session_id) {
         return Err(refused(
             Refusal::NotAllowed,

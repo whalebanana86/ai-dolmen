@@ -2,6 +2,8 @@
 
 use std::ops::Range;
 
+use serde::Serialize;
+
 /// Splits PostgreSQL SQL text into statements.
 ///
 /// Returns the byte range of each statement, from its first token to its
@@ -84,6 +86,191 @@ pub fn statement_at(sql: &str, offset: usize) -> Option<Range<usize>> {
         (_, Some(next)) => Some(next.clone()),
         (previous, None) => previous.cloned(),
     }
+}
+
+/// What a statement can destroy, to ask before it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum Risk {
+    /// An UPDATE or DELETE without a WHERE clause, which touches every row.
+    EveryRow { verb: String, table: String },
+    /// A DROP, such as `TABLE IF EXISTS public.orders`; `table` when it drops one.
+    Drop {
+        object: String,
+        table: Option<String>,
+    },
+    /// TRUNCATE, which empties the table.
+    Truncate { table: String },
+    /// ALTER TABLE ... DROP COLUMN, which loses the column's data.
+    DropColumn { table: String, column: String },
+}
+
+/// What `statement` (one statement) can destroy, if anything. Only plain
+/// UPDATE, DELETE, TRUNCATE, DROP and ALTER TABLE ... DROP are recognized;
+/// a WHERE inside parentheses, as in a subquery, doesn't count as the
+/// statement's own.
+pub fn risk(statement: &str) -> Option<Risk> {
+    let tokens = tokens(statement);
+    let top: Vec<&str> = tokens
+        .iter()
+        .filter(|t| t.depth == 0)
+        .map(|t| t.text)
+        .collect();
+    let word = |i: usize| {
+        top.get(i)
+            .map(|t| t.to_ascii_uppercase())
+            .unwrap_or_default()
+    };
+    let has_where = top.iter().any(|t| t.eq_ignore_ascii_case("where"));
+    let skip = |mut i: usize, words: &[&str]| {
+        while words.contains(&word(i).as_str()) {
+            i += 1;
+        }
+        i
+    };
+    match word(0).as_str() {
+        "UPDATE" => {
+            let (table, _) = name(&top, skip(1, &["ONLY"]))?;
+            (!has_where).then(|| Risk::EveryRow {
+                verb: "UPDATE".into(),
+                table,
+            })
+        }
+        "DELETE" if word(1) == "FROM" => {
+            let (table, _) = name(&top, skip(2, &["ONLY"]))?;
+            (!has_where).then(|| Risk::EveryRow {
+                verb: "DELETE".into(),
+                table,
+            })
+        }
+        "TRUNCATE" => {
+            let (table, _) = name(&top, skip(1, &["TABLE", "ONLY"]))?;
+            Some(Risk::Truncate { table })
+        }
+        "DROP" => {
+            let object = statement
+                .trim()
+                .trim_end_matches(';')
+                .split_whitespace()
+                .skip(1)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let table = (word(1) == "TABLE")
+                .then(|| name(&top, skip(2, &["IF", "EXISTS"])).map(|(n, _)| n))
+                .flatten();
+            Some(Risk::Drop { object, table })
+        }
+        "ALTER" if word(1) == "TABLE" => {
+            let (table, mut i) = name(&top, skip(2, &["IF", "EXISTS", "ONLY"]))?;
+            while i < top.len() {
+                if word(i) == "DROP" {
+                    match word(i + 1).as_str() {
+                        // Dropping a default, NOT NULL or a constraint keeps the data.
+                        "CONSTRAINT" | "DEFAULT" | "NOT" | "IDENTITY" | "EXPRESSION" => {}
+                        "COLUMN" => {
+                            let (column, _) = name(&top, skip(i + 2, &["IF", "EXISTS"]))?;
+                            return Some(Risk::DropColumn { table, column });
+                        }
+                        _ => {
+                            let (column, _) = name(&top, skip(i + 1, &["IF", "EXISTS"]))?;
+                            return Some(Risk::DropColumn { table, column });
+                        }
+                    }
+                }
+                i += 1;
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// A possibly qualified name starting at `top[i]`, as written, and the index after it.
+fn name(top: &[&str], i: usize) -> Option<(String, usize)> {
+    let is_part =
+        |t: &&str| t.starts_with('"') || t.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+    let first = top.get(i).filter(|t| is_part(t))?;
+    let mut name = (*first).to_owned();
+    let mut i = i + 1;
+    while top.get(i) == Some(&".") && top.get(i + 1).is_some_and(is_part) {
+        name.push('.');
+        name.push_str(top[i + 1]);
+        i += 2;
+    }
+    Some((name, i))
+}
+
+struct Token<'a> {
+    text: &'a str,
+    /// How deep in parentheses.
+    depth: u32,
+}
+
+/// Words, quoted names and punctuation, with comments and string contents
+/// left out (a string is one `''` token).
+fn tokens(sql: &str) -> Vec<Token<'_>> {
+    let bytes = sql.as_bytes();
+    let mut tokens = Vec::new();
+    let mut depth = 0u32;
+    let mut i = 0;
+    while i < bytes.len() {
+        let start = i;
+        match bytes[i] {
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                i = line_comment_end(bytes, i);
+                continue;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i = block_comment_end(bytes, i);
+                continue;
+            }
+            byte if byte.is_ascii_whitespace() => {
+                i += 1;
+                continue;
+            }
+            b'\'' => {
+                i = quoted_end(bytes, i, b'\'', is_escape_string(bytes, i));
+                tokens.push(Token { text: "''", depth });
+                continue;
+            }
+            b'"' => i = quoted_end(bytes, i, b'"', false),
+            b'$' => match dollar_quoted_end(bytes, i) {
+                Some(end) => {
+                    i = end;
+                    tokens.push(Token { text: "''", depth });
+                    continue;
+                }
+                None => i += 1,
+            },
+            b'(' => {
+                tokens.push(Token { text: "(", depth });
+                depth += 1;
+                i += 1;
+                continue;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                tokens.push(Token { text: ")", depth });
+                i += 1;
+                continue;
+            }
+            byte if is_identifier_byte(byte) || !byte.is_ascii() => {
+                while i < bytes.len() && (is_identifier_byte(bytes[i]) || !bytes[i].is_ascii()) {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+        tokens.push(Token {
+            text: &sql[start..i],
+            depth,
+        });
+    }
+    tokens
 }
 
 fn line_comment_end(bytes: &[u8], start: usize) -> usize {
@@ -187,6 +374,76 @@ mod tests {
 
     fn at(sql: &str, offset: usize) -> Option<&str> {
         statement_at(sql, offset).map(|r| &sql[r])
+    }
+
+    #[test]
+    fn recognizes_statements_that_destroy_data() {
+        let every = |verb: &str, table: &str| {
+            Some(Risk::EveryRow {
+                verb: verb.into(),
+                table: table.into(),
+            })
+        };
+        assert_eq!(risk("DELETE FROM orders"), every("DELETE", "orders"));
+        assert_eq!(
+            risk("delete from only public.orders;"),
+            every("DELETE", "public.orders")
+        );
+        assert_eq!(
+            risk(r#"UPDATE "Shop"."Orders" SET total = 0"#),
+            every("UPDATE", r#""Shop"."Orders""#)
+        );
+        // A WHERE in a subquery or a string isn't the statement's own.
+        assert_eq!(
+            risk("UPDATE t SET a = (SELECT 1 FROM u WHERE u.id = 2)"),
+            every("UPDATE", "t")
+        );
+        assert_eq!(
+            risk("UPDATE t SET note = 'where' -- where\n"),
+            every("UPDATE", "t")
+        );
+        assert_eq!(risk("DELETE FROM t WHERE id = 1"), None);
+        assert_eq!(risk("UPDATE t SET a = 1 WHERE CURRENT OF c"), None);
+        assert_eq!(risk("SELECT * FROM t"), None);
+        assert_eq!(risk("INSERT INTO t VALUES (1)"), None);
+
+        assert_eq!(
+            risk("TRUNCATE TABLE ONLY sales.items CASCADE"),
+            Some(Risk::Truncate {
+                table: "sales.items".into()
+            })
+        );
+        assert_eq!(
+            risk("DROP TABLE IF EXISTS public.orders CASCADE;"),
+            Some(Risk::Drop {
+                object: "TABLE IF EXISTS public.orders CASCADE".into(),
+                table: Some("public.orders".into())
+            })
+        );
+        assert_eq!(
+            risk("drop schema shop"),
+            Some(Risk::Drop {
+                object: "schema shop".into(),
+                table: None
+            })
+        );
+        assert_eq!(
+            risk("ALTER TABLE users DROP COLUMN IF EXISTS email"),
+            Some(Risk::DropColumn {
+                table: "users".into(),
+                column: "email".into()
+            })
+        );
+        assert_eq!(
+            risk("ALTER TABLE users ADD COLUMN a int, DROP b"),
+            Some(Risk::DropColumn {
+                table: "users".into(),
+                column: "b".into()
+            })
+        );
+        assert_eq!(risk("ALTER TABLE users ALTER COLUMN a DROP DEFAULT"), None);
+        assert_eq!(risk("ALTER TABLE users ALTER COLUMN a DROP NOT NULL"), None);
+        assert_eq!(risk("ALTER TABLE users DROP CONSTRAINT users_pkey"), None);
     }
 
     #[test]

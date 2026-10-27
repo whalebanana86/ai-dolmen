@@ -19,6 +19,12 @@
   --syntax-comment: #8a8a94;
   --diff-add: #2b7a3d;
   --diff-add-bg: #e9f7ec;
+  --env-development: #2b7a3d;
+  --env-development-bg: #e6f4ea;
+  --env-staging: #9a5800;
+  --env-staging-bg: #fff1d6;
+  --env-production: #c92a2a;
+  --env-production-bg: #ffe9e9;
   --mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -51,6 +57,12 @@
     --syntax-comment: #7a7a85;
     --diff-add: #8fd19e;
     --diff-add-bg: #1f3325;
+    --env-development: #8fd19e;
+    --env-development-bg: #1f3325;
+    --env-staging: #f2b75b;
+    --env-staging-bg: #3a2e17;
+    --env-production: #ff8787;
+    --env-production-bg: #3a2224;
     color-scheme: dark;
   }
 }
@@ -75,6 +87,12 @@
   --syntax-comment: #7a7a85;
   --diff-add: #8fd19e;
   --diff-add-bg: #1f3325;
+  --env-development: #8fd19e;
+  --env-development-bg: #1f3325;
+  --env-staging: #f2b75b;
+  --env-staging-bg: #3a2e17;
+  --env-production: #ff8787;
+  --env-production-bg: #3a2224;
   color-scheme: dark;
 }
 
@@ -631,6 +649,113 @@ button.danger {
   height: 1px;
   margin: 4px 6px;
   background: var(--border);
+}
+
+/* Environments and the read-only lock */
+
+.environment-badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.environment-badge.development {
+  background: var(--env-development-bg);
+  color: var(--env-development);
+}
+
+.environment-badge.staging {
+  background: var(--env-staging-bg);
+  color: var(--env-staging);
+}
+
+.environment-badge.production {
+  background: var(--env-production-bg);
+  color: var(--env-production);
+}
+
+/* A band across the top says which kind of database this is. */
+.workspace.environment-development .toolbar {
+  border-top: 3px solid var(--env-development);
+}
+
+.workspace.environment-staging .toolbar {
+  border-top: 3px solid var(--env-staging);
+}
+
+.workspace.environment-production .toolbar {
+  border-top: 3px solid var(--env-production);
+}
+
+.toolbar-label {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lock-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+
+.lock-toggle.locked {
+  color: var(--accent);
+}
+
+.lock-toggle.unlocked {
+  color: var(--muted);
+}
+
+.workspace.environment-production .lock-toggle.unlocked {
+  border-color: var(--env-production);
+  color: var(--env-production);
+}
+
+.saved-item .saved-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.risk-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dialog-body ul.risk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.risk-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: var(--danger-bg);
+}
+
+.risk-sql {
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Toolbar badge */

@@ -80,6 +80,8 @@ pub enum Refusal {
     BadSnapshotPath,
     /// Switching branches would carry the snapshot folder's uncommitted changes along.
     UncommittedChanges,
+    /// The connection is read-only for now.
+    ReadOnly,
 }
 
 impl From<keyring_core::Error> for Error {

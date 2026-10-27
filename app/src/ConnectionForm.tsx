@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
+  ENVIRONMENTS,
+  Environment,
   PasswordChange,
   SavedConnection,
   SessionInfo,
@@ -31,6 +33,8 @@ const NEW_CONNECTION: Draft = {
   snapshotRemote: null,
   recordHistory: true,
   allowSnapshotApply: null,
+  environment: null,
+  readOnly: null,
 };
 
 function toDraft(connection: SavedConnection): Draft {
@@ -81,6 +85,8 @@ export function ConnectionForm({ onConnected }: Props) {
       sslMode: current.id || sslChosen ? current.sslMode : isLocalHost(host) ? "prefer" : "verify-full",
     }));
   }
+  // Production starts read-only and takes no snapshot plans, unless set otherwise.
+  const production = draft.environment === "production";
   const weakSsl =
     !isLocalHost(draft.host) && draft.sslMode !== "verify-full" ? t.connect.sslWeak[draft.sslMode] : null;
 
@@ -97,8 +103,8 @@ export function ConnectionForm({ onConnected }: Props) {
     setBusy("connect");
     setError(null);
     try {
-      // For a saved connection, an empty password field means "use the saved password".
-      const useSavedPassword = target.hasPassword && typedPassword === "";
+      // For a saved connection, an empty password field means "use the saved
+      // password". Its settings come along either way.
       const session = await pg.connect(
         {
           host: target.host,
@@ -108,7 +114,7 @@ export function ConnectionForm({ onConnected }: Props) {
           sslMode: target.sslMode,
           password: typedPassword || null,
         },
-        useSavedPassword ? target.id : null,
+        target.id || null,
       );
       onConnected(session, saved.find((connection) => connection.id === target.id) ?? null);
     } catch (err) {
@@ -186,7 +192,10 @@ export function ConnectionForm({ onConnected }: Props) {
               onDoubleClick={() => connect(toDraft(connection), "")}
               title={t.connect.doubleClickToConnect}
             >
-              <span>{connection.name}</span>
+              <span className="saved-name">
+                {connection.environment && <EnvironmentBadge environment={connection.environment} />}
+                {connection.name}
+              </span>
               <span className="muted">
                 {connection.user}@{connection.host}:{connection.port}/{connection.database}
               </span>
@@ -196,14 +205,30 @@ export function ConnectionForm({ onConnected }: Props) {
 
         <form className="connect-form" onSubmit={submit}>
           <p className="muted">{t.connect.subtitle}</p>
-          <label className="field">
-            {t.connect.name}
-            <input
-              value={draft.name}
-              placeholder={defaultName(draft)}
-              onChange={(e) => update("name", e.target.value)}
-            />
-          </label>
+          <div className="field-row">
+            <label className="field grow">
+              {t.connect.name}
+              <input
+                value={draft.name}
+                placeholder={defaultName(draft)}
+                onChange={(e) => update("name", e.target.value)}
+              />
+            </label>
+            <label className="field" title={t.connect.environmentTitle}>
+              {t.connect.environment}
+              <select
+                value={draft.environment ?? ""}
+                onChange={(e) => update("environment", (e.target.value || null) as Environment | null)}
+              >
+                <option value="">{t.connect.noEnvironment}</option>
+                {ENVIRONMENTS.map((environment) => (
+                  <option key={environment} value={environment}>
+                    {t.environments[environment]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <div className="field-row">
             <label className="field grow">
               {t.connect.host}
@@ -269,10 +294,18 @@ export function ConnectionForm({ onConnected }: Props) {
             {t.connect.savePassword}
           </label>
           {weakSsl && <p className="error-text ssl-warning">{weakSsl}</p>}
+          <label className="checkbox" title={t.connect.readOnlyTitle}>
+            <input
+              type="checkbox"
+              checked={draft.readOnly ?? production}
+              onChange={(e) => setDraft({ ...draft, readOnly: e.target.checked })}
+            />
+            {t.connect.readOnly}
+          </label>
           <label className="checkbox" title={t.connect.allowSnapshotApplyTitle}>
             <input
               type="checkbox"
-              checked={draft.allowSnapshotApply ?? isLocalHost(draft.host)}
+              checked={draft.allowSnapshotApply ?? (isLocalHost(draft.host) && !production)}
               onChange={(e) => setDraft({ ...draft, allowSnapshotApply: e.target.checked })}
             />
             {t.connect.allowSnapshotApply}
@@ -306,4 +339,10 @@ export function ConnectionForm({ onConnected }: Props) {
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
     </main>
   );
+}
+
+/** A short colored label saying what a database is for. */
+export function EnvironmentBadge({ environment }: { environment: Environment }) {
+  const t = useT();
+  return <span className={`environment-badge ${environment}`}>{t.environments[environment]}</span>;
 }

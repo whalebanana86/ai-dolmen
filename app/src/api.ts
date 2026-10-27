@@ -24,6 +24,32 @@ export interface SessionInfo {
   label: string;
   /** user@host:port/database, to say which server something will change. */
   address: string;
+  environment: Environment | null;
+  /** Whether its transactions are read-only for now. */
+  readOnly: boolean;
+}
+
+/** What a database is for; production gets stricter defaults. */
+export type Environment = "development" | "staging" | "production";
+export const ENVIRONMENTS: Environment[] = ["development", "staging", "production"];
+
+/** What running a statement could destroy. */
+export type Risk =
+  | { kind: "everyRow"; verb: string; table: string }
+  | { kind: "drop"; object: string; table: string | null }
+  | { kind: "truncate"; table: string }
+  | { kind: "dropColumn"; table: string; column: string };
+
+export interface RowEstimate {
+  rows: number;
+  /** Counting stopped early: there are at least `rows`. */
+  atLeast: boolean;
+}
+
+export interface Assessment {
+  risk: Risk;
+  /** About how many rows it touches, when that can be told. */
+  estimate: RowEstimate | null;
 }
 
 export type StatementResult =
@@ -201,7 +227,8 @@ export type Refusal =
   | "destructiveNotAllowed"
   | "noModel"
   | "badSnapshotPath"
-  | "uncommittedChanges";
+  | "uncommittedChanges"
+  | "readOnly";
 
 /** Why asking the AI failed. */
 export type AiFailure =
@@ -264,6 +291,11 @@ export const pg = {
   setSchema: (sessionId: number, schema: string) => invoke<string | null>("pg_set_schema", { sessionId, schema }),
   /** The schema the session's unqualified names resolve in first. */
   currentSchema: (sessionId: number) => invoke<string | null>("pg_current_schema", { sessionId }),
+  /** Makes the session and every tab's session of its connection read-only, or lets them write. */
+  setReadOnly: (sessionId: number, readOnly: boolean) => invoke<void>("pg_set_read_only", { sessionId, readOnly }),
+  /** What each statement could destroy, with about how many rows; null for a harmless one. */
+  assess: (sessionId: number, statements: string[]) =>
+    invoke<(Assessment | null)[]>("pg_assess", { sessionId, statements }),
 };
 
 /** A connection the user saved. Its password, if any, stays in the OS keychain. */
@@ -283,8 +315,11 @@ export interface SavedConnection {
   snapshotRemote: SnapshotRemote | null;
   /** Whether statements run on this connection go into the query history. */
   recordHistory: boolean;
-  /** Whether snapshot plans may change this database; unset, only a server on this machine. */
+  /** Whether snapshot plans may change this database; unset, only a server on this machine that isn't production. */
   allowSnapshotApply: boolean | null;
+  environment: Environment | null;
+  /** Whether sessions start read-only; unset, only production's do. */
+  readOnly: boolean | null;
 }
 
 export interface SnapshotRemote {

@@ -29,6 +29,7 @@ export const en = {
       badSnapshotPath: "The snapshot folder must be a path inside the repository, such as db/schema.",
       uncommittedChanges:
         "The snapshot folder has changes that aren't committed. Commit or discard them before switching branches.",
+      readOnly: "The connection is read-only. Allow writing with the lock in the toolbar first.",
     },
     ai: {
       noApiKey: "There's no Anthropic API key yet. Add one in Settings (⚙) to use AI.",
@@ -100,6 +101,13 @@ export const en = {
       require: "Require encrypts but doesn't check the certificate, so an attacker in between can still read everything. Use Verify full.",
     },
     recordHistoryTitle: "Turn off for databases whose SQL shouldn't be kept on this computer, such as production",
+    environment: "Environment",
+    noEnvironment: "None",
+    environmentTitle:
+      "Shown as a color in the workspace. Production starts read-only and doesn't let snapshots change it, unless you set otherwise below.",
+    readOnly: "Start read-only",
+    readOnlyTitle:
+      "Statements can't change data until you allow writing with the lock in the toolbar. On by default for production.",
     confirmDelete: "Click again to delete",
     connect: "Connect",
     connecting: "Connecting…",
@@ -117,6 +125,12 @@ export const en = {
     runStatus: (line: number, done: number, total: number, ms: number) =>
       `Line ${line} · ${done} of ${plural(total, "statement", "statements")} · ${ms} ms`,
     errorLocation: (line: number, column: number) => `line ${line}, column ${column}`,
+    readOnly: "Read-only",
+    writable: "Writable",
+    readOnlyTitle: "Statements can't change data. Click to allow writing.",
+    writableTitle: "Statements can change data. Click to make the connection read-only.",
+    confirmWritable: "Click again to write to production",
+    readOnlyHint: "The connection is read-only. Allow writing with the lock in the toolbar to change data.",
     hint: "Hint:",
     locationNotSaved: (error: string) =>
       `The location is in use but couldn't be saved with the connection: ${error}`,
@@ -456,6 +470,30 @@ export const en = {
 
   graph: {
     committedBy: (author: string, date: string) => `${author}, ${date}`,
+  },
+
+  environments: {
+    development: "Development",
+    staging: "Staging",
+    production: "Production",
+  },
+
+  risk: {
+    title: "Run statements that destroy data?",
+    target: (label: string, address: string) => `On: ${label} (${address})`,
+    rows: (rows: number, atLeast: boolean) =>
+      atLeast ? `at least ${plural(rows, "row", "rows")}` : `about ${plural(rows, "row", "rows")}`,
+    deleteAll: (table: string, rows: string | null) =>
+      `DELETE without WHERE deletes every row of ${table}${rows ? `: ${rows}` : ""}.`,
+    updateAll: (table: string, rows: string | null) =>
+      `UPDATE without WHERE changes every row of ${table}${rows ? `: ${rows}` : ""}.`,
+    truncate: (table: string, rows: string | null) => `TRUNCATE empties ${table}${rows ? `: ${rows}` : ""}.`,
+    drop: (object: string, rows: string | null) =>
+      `DROP ${object} removes it${rows ? ` and its ${rows}` : ""}.`,
+    dropColumn: (table: string, column: string, rows: string | null) =>
+      `Drops column ${column} of ${table} with its values${rows ? ` in ${rows}` : ""}.`,
+    run: "Run anyway",
+    runOnProduction: "Run on production",
   },
 
   // Labels in CodeMirror's search panel, keyed by its English phrases.
