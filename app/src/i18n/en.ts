@@ -145,6 +145,8 @@ export const en = {
   results: {
     export: "Export…",
     exportTitle: "Saves every row of this result to a file",
+    tabs: "Results",
+    error: (n: number) => `Statement ${n} · failed`,
     statement: (n: number) => `Statement ${n}`,
     revealTitle: "Click to select it in the editor",
     rowsAffected: (n: number) => plural(n, "row affected", "rows affected"),

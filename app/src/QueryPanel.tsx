@@ -31,7 +31,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { HistoryPanel } from "./HistoryPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
-import { ResultView, StatementLine } from "./ResultView";
+import { ResultView, StatementLine, resultCount } from "./ResultView";
 import { PlanView } from "./PlanView";
 import { RiskDialog, RiskyStatement } from "./RiskDialog";
 import { SchemaTree } from "./SchemaTree";
@@ -909,33 +909,13 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             <section className="results">
               {running && <p className="muted status">{t.workspace.running}</p>}
               {!running && outcome && (
-                <>
-                  <p className="muted status">
-                    {t.workspace.runStatus(
-                      outcome.firstLine,
-                      outcome.results.length,
-                      outcome.statementCount,
-                      Math.round(outcome.elapsedMs),
-                    )}
-                  </p>
-                  {outcome.results.map(({ result, statement }, index) => (
-                    <ResultView
-                      key={`${outcome.runId}-${index}`}
-                      index={index}
-                      result={result}
-                      sql={statement.statement}
-                      onReveal={() => revealStatement(statement)}
-                      onExport={() => exportResult(statement.statement)}
-                    />
-                  ))}
-                  {outcome.failure && (
-                    <ErrorView
-                      {...outcome.failure}
-                      onFix={() => fixWithAi(outcome.failure!)}
-                      onReveal={() => revealStatement(outcome.failure!.statement)}
-                    />
-                  )}
-                </>
+                <RunResults
+                  key={outcome.runId}
+                  outcome={outcome}
+                  onReveal={revealStatement}
+                  onExport={exportResult}
+                  onFix={fixWithAi}
+                />
               )}
               {!running && active?.plan?.output && (
                 <PlanView
@@ -1185,6 +1165,85 @@ async function statementsToRun(sql: string, selectionStart: number, selectionEnd
   const ranges = await sqlText.split(sql.slice(selectionStart, selectionEnd));
   return ranges.map(
     (range): TextRange => ({ start: range.start + selectionStart, end: range.end + selectionStart }),
+  );
+}
+
+/**
+ * A run's results. Several are tabs, so the one shown fills the panel and only
+ * its grid scrolls; the error that stopped the run is the last tab, shown first.
+ */
+function RunResults({
+  outcome,
+  onReveal,
+  onExport,
+  onFix,
+}: {
+  outcome: Outcome;
+  onReveal: (statement: FixTarget) => void;
+  onExport: (statement: string) => void;
+  onFix: (failure: NonNullable<Outcome["failure"]>) => void;
+}) {
+  const t = useT();
+  const { results, failure } = outcome;
+  const [selected, setSelected] = useState(failure ? results.length : Math.max(0, results.length - 1));
+  const shown = results[selected];
+
+  return (
+    <>
+      <p className="muted status">
+        {t.workspace.runStatus(outcome.firstLine, results.length, outcome.statementCount, Math.round(outcome.elapsedMs))}
+      </p>
+      {results.length + (failure ? 1 : 0) > 1 && (
+        <div className="result-tabs" role="tablist" aria-label={t.results.tabs}>
+          {results.map(({ result, statement }, i) => {
+            const table = statementTable(statement.statement);
+            return (
+              <button
+                key={i}
+                role="tab"
+                aria-selected={i === selected}
+                className={i === selected ? "result-tab selected" : "result-tab"}
+                onClick={() => setSelected(i)}
+                title={statement.statement}
+              >
+                {t.results.statement(i + 1)}
+                {table && (
+                  <>
+                    {" · "}
+                    <strong className="result-table">{table}</strong>
+                  </>
+                )}
+                <span className="muted"> · {resultCount(result, t)}</span>
+              </button>
+            );
+          })}
+          {failure && (
+            <button
+              role="tab"
+              aria-selected={selected === results.length}
+              className={selected === results.length ? "result-tab error selected" : "result-tab error"}
+              onClick={() => setSelected(results.length)}
+              title={failure.statement.statement}
+            >
+              {t.results.error(results.length + 1)}
+            </button>
+          )}
+        </div>
+      )}
+      {shown ? (
+        <ResultView
+          index={selected}
+          result={shown.result}
+          sql={shown.statement.statement}
+          onReveal={() => onReveal(shown.statement)}
+          onExport={() => onExport(shown.statement.statement)}
+        />
+      ) : (
+        failure && (
+          <ErrorView {...failure} onFix={() => onFix(failure)} onReveal={() => onReveal(failure.statement)} />
+        )
+      )}
+    </>
   );
 }
 

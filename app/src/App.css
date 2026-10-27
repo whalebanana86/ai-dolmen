@@ -459,19 +459,62 @@ button.danger {
   flex: 1 1 0;
 }
 
+/* A column whose result grid takes the height left, so only the grid scrolls.
+   Plans and errors, which have no scroller of their own, scroll the panel. */
 .results {
+  display: flex;
   flex: 1 1 0;
+  flex-direction: column;
   min-height: 120px;
   overflow: auto;
   padding: 12px;
 }
 
-.status {
-  margin: 0 0 12px;
+.results > * {
+  flex: none;
 }
 
-.result {
-  margin-bottom: 16px;
+.status {
+  margin: 0 0 10px;
+}
+
+.results > .result {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.result-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.result-tab {
+  max-width: 320px;
+  padding: 2px 10px;
+  overflow: hidden;
+  border-color: var(--border);
+  background: transparent;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-tab.selected {
+  border-color: var(--accent);
+  background: var(--selection-match);
+}
+
+.result-tab.error {
+  color: var(--danger);
+}
+
+.result-tab.error.selected {
+  border-color: var(--danger);
+  background: var(--danger-bg);
 }
 
 .result-title {
@@ -509,7 +552,9 @@ button.danger {
 }
 
 .grid {
-  max-height: 60vh;
+  /* As tall as its rows, shrinking to the panel's height and scrolling then. */
+  flex: 0 1 auto;
+  min-height: 72px;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;

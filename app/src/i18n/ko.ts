@@ -119,7 +119,7 @@ export const ko: Messages = {
     erd: "ERD",
     erdTitle: "테이블과 관계를 다이어그램으로 봅니다",
     running: "실행 중…",
-    runStatus: (line, done, total, ms) => `${line}행 · 문장 ${total}개 중 ${done}개 · ${ms} ms`,
+    runStatus: (line, done, total, ms) => `${line}번 줄부터 · 문장 ${total}개 중 ${done}개 · ${ms} ms`,
     errorLocation: (line, column) => `${line}행 ${column}열`,
     readOnly: "읽기 전용",
     writable: "쓰기 가능",
@@ -139,6 +139,8 @@ export const ko: Messages = {
   results: {
     export: "내보내기…",
     exportTitle: "이 결과의 모든 행을 파일로 저장합니다",
+    tabs: "결과",
+    error: (n) => `문장 ${n} · 실패`,
     statement: (n) => `문장 ${n}`,
     revealTitle: "누르면 편집기에서 이 문장을 선택합니다",
     rowsAffected: (n) => `${count(n, "행")} 변경됨`,

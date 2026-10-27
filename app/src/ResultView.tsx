@@ -1,4 +1,5 @@
 import { StatementResult } from "./api";
+import type { Messages } from "./i18n/en";
 import { ResultGrid } from "./ResultGrid";
 import { useT } from "./settings";
 import { statementTable } from "./sqlIdent";
@@ -17,14 +18,7 @@ interface Props {
 export function ResultView({ index, result, sql, onReveal, onExport }: Props) {
   const t = useT();
   const table = statementTable(sql);
-  const count =
-    result.kind === "command"
-      ? result.rowsAffected > 0
-        ? t.results.rowsAffected(result.rowsAffected)
-        : t.results.completed
-      : result.rows.length < result.totalRows
-        ? t.results.firstRows(result.rows.length, result.totalRows)
-        : t.results.rows(result.totalRows);
+  const count = resultCount(result, t);
 
   return (
     <div className="result">
@@ -58,4 +52,14 @@ export function StatementLine({ sql, onReveal }: { sql: string; onReveal: () => 
       {sql.replace(/\s+/g, " ").trim()}
     </button>
   );
+}
+
+/** What a result holds, e.g. "1,000 rows" or "3 rows affected". */
+export function resultCount(result: StatementResult, t: Messages) {
+  if (result.kind === "command") {
+    return result.rowsAffected > 0 ? t.results.rowsAffected(result.rowsAffected) : t.results.completed;
+  }
+  return result.rows.length < result.totalRows
+    ? t.results.firstRows(result.rows.length, result.totalRows)
+    : t.results.rows(result.totalRows);
 }
