@@ -1,0 +1,124 @@
+name: Release
+
+# A version tag such as v0.1.0 builds the desktop app for macOS, Windows and
+# Linux and attaches the installers to a draft GitHub release, to check and
+# publish by hand. Run by hand (Actions → Release → Run workflow), it builds the
+# installers as workflow artifacts only, without a release.
+#
+# macOS builds are signed ad hoc unless these secrets are set:
+#   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY
+#   and, to notarize, APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# A release in progress is never cancelled by another push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag matches the version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          app=$(node -p "require('./app/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ] || [ "$app" != "$version" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME must be v$version, the version in Cargo.toml, and app/package.json must say $version too (it says $app)."
+            exit 1
+          fi
+      # Made once here, so the builds don't race to create it.
+      - name: Create the draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Dolmen $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md --generate-notes
+          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -1)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: release
+    # Runs without the release job when started by hand.
+    if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple silicon)
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS (Intel)
+            runner: macos-latest
+            target: x86_64-apple-darwin
+          - name: Linux (x64)
+            # The oldest supported Ubuntu, so the AppImage and .deb run on older glibc.
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: Windows (x64)
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+      # Tauri reads these when they are set at all, so they are only set when
+      # the secrets exist; otherwise the app is signed ad hoc.
+      - name: Use the Apple signing secrets, if any
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "$(printenv "$name")" ]; then
+              { echo "$name<<__DOLMEN_SECRET__"; printenv "$name"; echo "__DOLMEN_SECRET__"; } >> "$GITHUB_ENV"
+            fi
+          done
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          projectPath: app
+          args: --target ${{ matrix.target }}
+          releaseId: ${{ needs.release.outputs.id }}
+          uploadWorkflowArtifacts: ${{ needs.release.result == 'skipped' }}

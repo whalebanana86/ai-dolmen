@@ -4,9 +4,21 @@ English | [한국어](README.ko.md)
 
 An open-source, AI-native database client with schema version control built in.
 
-> **Status:** early development. There is nothing to download yet.
+> **Status:** early preview. Builds for macOS, Windows and Linux are published on the [Releases](https://github.com/whalebanana86/ai-dolmen/releases) page.
 
 A *dolmen* — a "stone table" — is a megalithic monument that has stood for thousands of years. The Korean peninsula, where Dolmen is made, is home to roughly 40% of the world's dolmens. Dolmen aims to make the history of your tables just as durable: every schema change is recorded in Git.
+
+## Install
+
+Download the installer for your platform from
+[Releases](https://github.com/whalebanana86/ai-dolmen/releases): a `.dmg` for
+macOS (`aarch64` for Apple silicon, `x64` for Intel), a `-setup.exe` or `.msi`
+for Windows, or an `.AppImage`, `.deb` or `.rpm` for Linux.
+
+The builds aren't signed by a known developer yet. macOS says it can't check
+the app: open it from *System Settings → Privacy & Security → Open Anyway*, or
+run `xattr -dr com.apple.quarantine /Applications/Dolmen.app` once. On Windows,
+SmartScreen asks; choose *More info → Run anyway*.
 
 ## Planned features
 
@@ -89,6 +101,29 @@ readable only by you, keeps 90 days and up to 10,000 queries per connection
 and never keeps result rows. Turn it off per connection for databases whose SQL
 shouldn't be kept. The editor's text is kept per connection as well.
 
+## Production safety
+
+Give a saved connection an environment (development, staging or production)
+and the workspace shows it as a colored band and badge. Production connections
+start **read-only**: every tab's session refuses to change data until you allow
+writing with the lock in the toolbar, which on production takes a second click.
+While locked, edits from the detail panel and snapshot updates are refused too.
+Both defaults can be changed per connection.
+
+Before running an `UPDATE` or `DELETE` without `WHERE`, a `TRUNCATE`, a `DROP`
+or a dropped column, the editor asks first, naming the database and about how
+many rows each statement touches.
+
+## Query plans
+
+**Plan** (⌘E) shows how PostgreSQL runs the statement at the cursor, and ⌘⇧E
+measures it with `EXPLAIN ANALYZE`. Each step shows its rows (actual against
+expected), the time it took itself and its share of the whole, with notes on
+the usual causes of a slow query: a sequential scan that throws most rows away,
+an estimate ten times off, a sort that spills to disk. Measuring runs the
+statement on a separate session inside a transaction that is rolled back; for
+a statement that changes data, the plan asks before measuring.
+
 ## AI
 
 Press **AI** (⌘K) in the editor to ask Claude to write SQL for a request in
@@ -131,6 +166,12 @@ DOLMEN_TEST_PG_HOST=localhost DOLMEN_TEST_PG_PORT=55432 cargo test
 ```
 
 Without `DOLMEN_TEST_PG_HOST`, tests that need a server are skipped.
+
+To release, set the version in `Cargo.toml` (`[workspace.package]`) and
+`app/package.json`, commit, and push a matching tag such as `v0.2.0`. The
+[Release workflow](.github/workflows/release.yml) builds the installers and
+attaches them to a draft release to review and publish. It signs and notarizes
+the macOS app when the Apple secrets it lists are set.
 
 ## Repository layout
 
