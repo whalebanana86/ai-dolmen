@@ -253,6 +253,10 @@ export const ko: Messages = {
     empty: "이 스키마에는 테이블이 없습니다.",
     help: "테이블을 끌어서 옮기고, 스크롤로 확대·축소합니다. 테이블을 클릭하면 그 관계만 강조되고, 두 번 클릭하면 상세가 열립니다.",
     legend: "선 색 = 참조 대상",
+    notation: "선 끝 표기",
+    ends: { one: "정확히 하나", zeroOrOne: "0 또는 하나", many: "0개 이상" },
+    cardinality: (table, children, referenced, parents) =>
+      `${referenced} 한 행에 ${table} ${children}, ${table} 한 행에 ${referenced} ${parents}`,
   },
 
   snapshot: {

@@ -1671,15 +1671,59 @@ button.link:hover {
   opacity: 0.25;
 }
 
-.erd-edge-label {
+/* Crow's foot ends, drawn over the line; the zero's circle hides the line inside it. */
+.erd-end line,
+.erd-end circle {
+  stroke-width: 1.75;
+}
+
+.erd-end circle {
+  fill: var(--bg);
+}
+
+.erd-legend .erd-end circle {
+  fill: var(--surface);
+}
+
+/* An invisible wider copy of the line, for its tooltip. */
+.erd-hover {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+}
+
+/* The columns of a multi-column key, grouped on the box's edge. */
+.erd-bracket {
   position: absolute;
-  padding: 0 4px;
-  border-radius: 4px;
-  background: var(--surface);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10px;
+  width: 7px;
+  border: 2px solid;
   pointer-events: none;
+}
+
+.erd-bracket.right {
+  right: -7px;
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+}
+
+.erd-bracket.left {
+  left: -7px;
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+}
+
+.erd-legend .erd-legend-title {
+  margin-top: 8px;
+}
+
+.erd-notation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .erd-legend {
@@ -1732,8 +1776,8 @@ button.link:hover {
 }
 
 .erd-table {
+  position: relative;
   width: 260px;
-  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -1756,6 +1800,7 @@ button.link:hover {
   height: 34px;
   padding: 0 10px;
   overflow: hidden;
+  border-radius: 7px 7px 0 0;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
   font-weight: 600;
@@ -1811,7 +1856,7 @@ button.link:hover {
   white-space: nowrap;
 }
 
-.erd-column .react-flow__handle {
+.erd-table .react-flow__handle {
   width: 6px;
   height: 6px;
   min-width: 0;

@@ -259,6 +259,10 @@ export const en = {
     empty: "This schema has no tables.",
     help: "Drag to move tables, scroll to zoom. Click a table to pick out its relationships; double-click for its details.",
     legend: "Lines into",
+    notation: "Ends",
+    ends: { one: "exactly one", zeroOrOne: "zero or one", many: "zero or more" },
+    cardinality: (table: string, children: string, referenced: string, parents: string) =>
+      `Each ${referenced} row: ${children} ${table} rows. Each ${table} row: ${parents} ${referenced} row.`,
   },
 
   snapshot: {

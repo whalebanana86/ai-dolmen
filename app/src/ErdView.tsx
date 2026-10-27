@@ -5,7 +5,6 @@ import {
   BaseEdge,
   Controls,
   type Edge,
-  EdgeLabelRenderer,
   type EdgeProps,
   Handle,
   MiniMap,
@@ -22,7 +21,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Graph, layout } from "@dagrejs/dagre";
 import { ForeignKey, Introspection, ObjectRef, Table } from "./api";
-import { primaryKeyColumns } from "./sqlIdent";
+import { primaryKeyColumns, splitNames } from "./sqlIdent";
 import { useSettings, useT } from "./settings";
 
 interface Props {
@@ -52,11 +51,31 @@ type TableData = {
   foreignKeyColumns: string[];
   /** From another schema, shown because a table here references it or is referenced by it. */
   outside: boolean;
+  /** Brackets over the columns of multi-column keys, which their lines start or end at. */
+  brackets: Bracket[];
 };
+
+/**
+ * A multi-column foreign key's columns, grouped on the box's edge: on the
+ * right where its line leaves, on the left where a line arrives (on the right
+ * for a table that references itself).
+ */
+type Bracket = { handle: string; side: "out" | "in" | "self"; first: number; last: number; color: number };
+
+/**
+ * Crow's foot ends. Where a key arrives: `one` when its columns are NOT NULL,
+ * `zeroOrOne` when they may be null. Where it leaves: `many`, or `zeroOrOne`
+ * when the columns are unique, which makes the relationship one-to-one.
+ */
+type End = "one" | "zeroOrOne" | "many";
 type TableNode = Node<TableData, "table">;
 
 type RelationshipData = {
   fk: ForeignKey;
+  /** How many referenced rows a row has, drawn at the referenced table. */
+  parentEnd: End;
+  /** How many referencing rows a row can have, drawn at the referencing table. */
+  childEnd: End;
   /** The referenced table's palette slot, 1 to PALETTE_SIZE. */
   color: number;
   /** Where the line turns, from the layout; null once one of its tables was moved. */
@@ -79,6 +98,8 @@ const NODE_WIDTH = 260;
 const HEADER_HEIGHT = 34;
 const ROW_HEIGHT = 22;
 const RANK_GAP = 120;
+/** How far a bracket stands off the box's edge. */
+const BRACKET_WIDTH = 7;
 
 function Erd({ introspection, schema: initialSchema, focus: initialFocus, onOpenDetail, onClose }: Props) {
   const t = useT();
@@ -207,6 +228,13 @@ function Erd({ introspection, schema: initialSchema, focus: initialFocus, onOpen
                       {entry.label}
                     </button>
                   ))}
+                  <p className="muted erd-legend-title">{t.erd.notation}</p>
+                  {(["one", "zeroOrOne", "many"] as const).map((end) => (
+                    <span key={end} className="erd-notation">
+                      <EndSymbol end={end} />
+                      {t.erd.ends[end]}
+                    </span>
+                  ))}
                 </Panel>
               )}
             </ReactFlow>
@@ -221,6 +249,26 @@ function TableBox({ data }: NodeProps<TableNode>) {
   return (
     <div className={`erd-table${data.outside ? " outside" : ""}`} title={data.table.comment ?? undefined}>
       <div className="erd-table-name">{data.label}</div>
+      {data.brackets.map((bracket) => {
+        const top = HEADER_HEIGHT + bracket.first * ROW_HEIGHT + 4;
+        const height = (bracket.last - bracket.first + 1) * ROW_HEIGHT - 8;
+        const right = bracket.side !== "in";
+        return (
+          <div key={bracket.handle}>
+            <div
+              className={`erd-bracket ${right ? "right" : "left"}`}
+              style={{ top, height, borderColor: `var(--erd-${bracket.color})` }}
+            />
+            <Handle
+              type={bracket.side === "out" ? "source" : "target"}
+              position={right ? Position.Right : Position.Left}
+              id={bracket.handle}
+              isConnectable={false}
+              style={{ top: top + height / 2, [right ? "right" : "left"]: -BRACKET_WIDTH }}
+            />
+          </div>
+        );
+      })}
       {data.table.columns.map((column) => {
         const key = data.primaryKey.includes(column.name)
           ? "PK"
@@ -243,16 +291,15 @@ function TableBox({ data }: NodeProps<TableNode>) {
   );
 }
 
-/** A foreign key: a line in its referenced table's color, ending in an arrow at the referenced column. */
+/** A foreign key: a line in its referenced table's color, with crow's foot ends. */
 function RelationshipLine({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps<RelationshipEdge>) {
-  const { fk, color, route, loop } = data!;
+  const t = useT();
+  const { fk, color, route, loop, parentEnd, childEnd } = data!;
   const stroke = `var(--erd-${color})`;
   let path: string;
-  let label: [number, number];
   if (loop !== null) {
     const out = Math.max(sourceX, targetX) + loop;
     path = rounded([[sourceX, sourceY], [out, sourceY], [out, targetY], [targetX, targetY]]);
-    label = [out, (sourceY + targetY) / 2];
   } else if (route && targetX > sourceX) {
     const points: [number, number][] = [[sourceX, sourceY]];
     let y = sourceY;
@@ -263,9 +310,8 @@ function RelationshipLine({ id, sourceX, sourceY, targetX, targetY, data }: Edge
     });
     points.push([targetX, targetY]);
     path = rounded(points);
-    label = [route.turns[0], (sourceY + (route.lanes[0] ?? targetY)) / 2];
   } else {
-    const [smooth, x, y] = getSmoothStepPath({
+    [path] = getSmoothStepPath({
       sourceX,
       sourceY,
       sourcePosition: Position.Right,
@@ -274,28 +320,65 @@ function RelationshipLine({ id, sourceX, sourceY, targetX, targetY, data }: Edge
       targetPosition: Position.Left,
       borderRadius: 8,
     });
-    path = smooth;
-    label = [x, y];
   }
-  // The arrow points into the referenced column: rightwards, or leftwards on a loop.
-  const tip = loop !== null ? 1 : -1;
-  const arrow = `M ${targetX} ${targetY} L ${targetX - tip * 9} ${targetY - 4.5} L ${targetX - tip * 9} ${targetY + 4.5} Z`;
+  const actions = [
+    fk.onDelete !== "NO ACTION" && `ON DELETE ${fk.onDelete}`,
+    fk.onUpdate !== "NO ACTION" && `ON UPDATE ${fk.onUpdate}`,
+  ].filter(Boolean);
+  const tooltip =
+    `${fk.name}\n${fk.table} (${fk.columns.join(", ")}) → ${fk.referencedTable} (${fk.referencedColumns.join(", ")})` +
+    `\n${t.erd.cardinality(fk.table, t.erd.ends[childEnd], fk.referencedTable, t.erd.ends[parentEnd])}` +
+    (actions.length ? `\n${actions.join(" · ")}` : "");
 
   return (
     <>
       <BaseEdge id={id} path={path} style={{ stroke }} interactionWidth={14} />
-      <path className="erd-arrow" d={arrow} style={{ fill: stroke }} />
-      {fk.columns.length > 1 && (
-        <EdgeLabelRenderer>
-          <div
-            className="erd-edge-label"
-            style={{ transform: `translate(-50%, -50%) translate(${label[0]}px, ${label[1]}px)` }}
-          >
-            ({fk.columns.join(", ")})
-          </div>
-        </EdgeLabelRenderer>
-      )}
+      {/* Lines leave a box rightwards; they arrive from the left, or from the right on a loop. */}
+      <CrowsFoot end={childEnd} x={sourceX} y={sourceY} outward={1} color={stroke} />
+      <CrowsFoot end={parentEnd} x={targetX} y={targetY} outward={loop !== null ? 1 : -1} color={stroke} />
+      <path className="erd-hover" d={path}>
+        <title>{tooltip}</title>
+      </path>
     </>
+  );
+}
+
+/** A crow's foot end at (x, y) on a box's edge; `outward` is the direction away from the box. */
+function CrowsFoot({ end, x, y, outward, color }: { end: End; x: number; y: number; outward: 1 | -1; color: string }) {
+  const at = (distance: number) => x + outward * distance;
+  const bar = (distance: number) => <line x1={at(distance)} y1={y - 6} x2={at(distance)} y2={y + 6} />;
+  return (
+    <g className="erd-end" style={{ stroke: color }}>
+      {end === "many" && (
+        <>
+          <line x1={at(12)} y1={y} x2={x} y2={y - 6} />
+          <line x1={at(12)} y1={y} x2={x} y2={y + 6} />
+          <circle cx={at(17)} cy={y} r={3.5} />
+        </>
+      )}
+      {end === "zeroOrOne" && (
+        <>
+          {bar(8)}
+          <circle cx={at(16)} cy={y} r={3.5} />
+        </>
+      )}
+      {end === "one" && (
+        <>
+          {bar(7)}
+          {bar(12)}
+        </>
+      )}
+    </g>
+  );
+}
+
+/** The ends' symbols, for the legend. */
+function EndSymbol({ end }: { end: End }) {
+  return (
+    <svg width="30" height="14" viewBox="0 0 30 14" aria-hidden="true">
+      <line x1="0" y1="7" x2="30" y2="7" stroke="currentColor" strokeWidth="1.5" />
+      <CrowsFoot end={end} x={30} y={7} outward={-1} color="currentColor" />
+    </svg>
   );
 }
 
@@ -379,24 +462,47 @@ function buildDiagram(
           .filter((fk) => fk.schema === entry.schema && fk.table === entry.table.name)
           .flatMap((fk) => fk.columns),
         outside: schema !== null && entry.schema !== schema,
+        brackets: [],
       },
       width: NODE_WIDTH,
     });
   }
   nodes.sort((a, b) => a.id.localeCompare(b.id));
 
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const edges = keys.map((fk): RelationshipEdge => {
     const source = id(fk.schema, fk.table);
     const target = id(fk.referencedSchema, fk.referencedTable);
     const self = source === target;
+    const edgeId = `${source}.${fk.name}`;
+    const color = colorOf(target);
+    // A multi-column key's line runs between brackets over its columns.
+    const bracket = (node: TableNode, columns: string[], side: Bracket["side"]) => {
+      const rows = columns.map((c) => node.data.table.columns.findIndex((col) => col.name === c)).filter((i) => i >= 0);
+      const handle = `${edgeId}:${side}`;
+      node.data.brackets.push({ handle, side, first: Math.min(...rows), last: Math.max(...rows), color });
+      return handle;
+    };
+    const composite = fk.columns.length > 1;
+    const sourceTable = tables.get(source)!.table;
+    const nullable = fk.columns.some((c) => sourceTable.columns.find((col) => col.name === c)?.nullable ?? true);
     return {
-      id: `${source}.${fk.name}`,
+      id: edgeId,
       type: "relationship",
       source,
-      sourceHandle: `${fk.columns[0]}:out`,
+      sourceHandle: composite ? bracket(nodeById.get(source)!, fk.columns, "out") : `${fk.columns[0]}:out`,
       target,
-      targetHandle: `${fk.referencedColumns[0]}:${self ? "self" : "in"}`,
-      data: { fk, color: colorOf(target), route: null, loop: null },
+      targetHandle: composite
+        ? bracket(nodeById.get(target)!, fk.referencedColumns, self ? "self" : "in")
+        : `${fk.referencedColumns[0]}:${self ? "self" : "in"}`,
+      data: {
+        fk,
+        color,
+        route: null,
+        loop: null,
+        parentEnd: nullable ? "zeroOrOne" : "one",
+        childEnd: isUnique(sourceTable, fk.columns) ? "zeroOrOne" : "many",
+      },
       ariaLabel: `${fk.name}: ${fk.table}(${fk.columns.join(", ")}) → ${fk.referencedTable}(${fk.referencedColumns.join(", ")})`,
     };
   });
@@ -418,11 +524,11 @@ function buildDiagram(
 function place(nodes: TableNode[], edges: RelationshipEdge[]) {
   const height = (node: TableNode) => HEADER_HEIGHT + node.data.table.columns.length * ROW_HEIGHT;
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const rowY = (node: TableNode, column: string) =>
-    node.position.y +
-    HEADER_HEIGHT +
-    Math.max(0, node.data.table.columns.findIndex((c) => c.name === column)) * ROW_HEIGHT +
-    ROW_HEIGHT / 2;
+  // Where a key's line leaves the box: the middle of its columns.
+  const rowY = (node: TableNode, columns: string[]) => {
+    const rows = columns.map((c) => Math.max(0, node.data.table.columns.findIndex((col) => col.name === c)));
+    return node.position.y + HEADER_HEIGHT + ((Math.min(...rows) + Math.max(...rows) + 1) / 2) * ROW_HEIGHT;
+  };
 
   const linked = new Set(edges.flatMap((e) => [e.source, e.target]));
   const graph = new Graph({ multigraph: true });
@@ -472,7 +578,7 @@ function place(nodes: TableNode[], edges: RelationshipEdge[]) {
     if (lanes.length !== to - from - 1) continue;
     const route: Route = { turns: [], lanes };
     e.data!.route = route;
-    const start = rowY(source, e.data!.fk.columns[0]);
+    const start = rowY(source, e.data!.fk.columns);
     for (let step = 0; step < to - from; step++) {
       const y = step === 0 ? start : lanes[step - 1];
       const gap = gaps.get(from + step) ?? [];
@@ -502,4 +608,20 @@ function place(nodes: TableNode[], edges: RelationshipEdge[]) {
     row.forEach((node, j) => (node.position = { x: 20 + j * (NODE_WIDTH + 40), y }));
     y += Math.max(...row.map(height)) + 40;
   }
+}
+
+/** Whether a primary key, unique constraint or unique index makes these columns unique. */
+function isUnique(table: Table, columns: string[]): boolean {
+  const keys = table.constraints
+    .filter((c) => c.kind === "primaryKey" || c.kind === "unique")
+    .map((c) => /^(?:PRIMARY KEY|UNIQUE) \((.*?)\)/.exec(c.definition)?.[1]);
+  // Only plain unique indexes: a partial one (WHERE ...) leaves the other rows free.
+  for (const index of table.indexes) {
+    const match = /^CREATE UNIQUE INDEX .* USING \w+ \(([^()]*)\)$/.exec(index.definition);
+    if (match) keys.push(match[1]);
+  }
+  return keys.some((list) => {
+    const key = list ? splitNames(list) : [];
+    return key.length > 0 && key.every((column) => columns.includes(column));
+  });
 }
