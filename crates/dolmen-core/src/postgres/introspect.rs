@@ -11,8 +11,8 @@ use tokio_postgres::GenericClient;
 use crate::Error;
 use crate::schema::{
     Column, Constraint, ConstraintKind, Database, EnumType, Extension, ForeignKey, Function,
-    FunctionKind, Generated, Identity, Index, PartitionOf, Schema, Sequence, Table, TableKind,
-    View,
+    FunctionKind, Generated, Grant, Identity, Index, PartitionOf, Schema, Sequence, Table,
+    TableKind, View,
 };
 
 /// Matches user schemas through the alias `n` for `pg_namespace`.
@@ -178,6 +178,7 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                         }),
                         _ => None,
                     },
+                    grants: Vec::new(),
                 });
                 Relation::Table {
                     schema,
@@ -192,6 +193,8 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                     columns: Vec::new(),
                     definition: row.get::<_, Option<String>>(4).unwrap_or_default(),
                     comment,
+                    indexes: Vec::new(),
+                    grants: Vec::new(),
                 });
                 Relation::View {
                     schema,
@@ -311,13 +314,61 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
         )
         .await?
     {
-        let Some(&Relation::Table { schema, table }) = relations.get(&row.get::<_, u32>(0)) else {
-            continue;
-        };
-        schemas[schema].tables[table].indexes.push(Index {
+        let index = Index {
             name: row.get(1),
             definition: row.get(2),
-        });
+        };
+        match relations.get(&row.get::<_, u32>(0)) {
+            Some(&Relation::Table { schema, table }) => {
+                schemas[schema].tables[table].indexes.push(index)
+            }
+            Some(&Relation::View { schema, view }) => {
+                schemas[schema].views[view].indexes.push(index)
+            }
+            None => {}
+        }
+    }
+
+    // Privileges besides the owner's, one entry per role and grant option.
+    for row in client
+        .query(
+            &format!(
+                "SELECT relation, role, grantable, privilege FROM (
+                     SELECT c.oid AS relation,
+                            CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+                                 ELSE pg_catalog.pg_get_userbyid(a.grantee)::text END AS role,
+                            a.is_grantable AS grantable,
+                            a.privilege_type AS privilege
+                     FROM pg_catalog.pg_class c
+                     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                     CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+                     WHERE c.relkind IN ('r', 'p', 'f', 'v', 'm') AND {USER_SCHEMAS}
+                       AND a.grantee <> c.relowner
+                 ) privileges
+                 ORDER BY relation, role COLLATE \"C\", grantable, privilege COLLATE \"C\""
+            ),
+            &[],
+        )
+        .await?
+    {
+        let grants = match relations.get(&row.get::<_, u32>(0)) {
+            Some(&Relation::Table { schema, table }) => &mut schemas[schema].tables[table].grants,
+            Some(&Relation::View { schema, view }) => &mut schemas[schema].views[view].grants,
+            None => continue,
+        };
+        let grantee: String = row.get(1);
+        let grantable: bool = row.get(2);
+        let privilege: String = row.get(3);
+        match grants.last_mut() {
+            Some(last) if last.grantee == grantee && last.grantable == grantable => {
+                last.privileges.push(privilege)
+            }
+            _ => grants.push(Grant {
+                grantee,
+                privileges: vec![privilege],
+                grantable,
+            }),
+        }
     }
 
     for row in client

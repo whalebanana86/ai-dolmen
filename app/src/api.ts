@@ -77,6 +77,16 @@ export interface Table {
   comment: string | null;
   /** For a partition: the table it belongs to and its bounds. Its columns come from there. */
   partitionOf?: { schema: string; table: string; bound: string } | null;
+  /** Privileges held by roles other than the owner. */
+  grants?: Grant[];
+}
+
+/** Privileges a role (or PUBLIC) holds on a table or view, besides its owner's. */
+export interface Grant {
+  grantee: string;
+  privileges: string[];
+  /** Whether the grantee may grant them on. */
+  grantable: boolean;
 }
 
 export interface View {
@@ -85,6 +95,9 @@ export interface View {
   columns: Column[];
   definition: string;
   comment: string | null;
+  /** A materialized view's indexes. */
+  indexes?: Index[];
+  grants?: Grant[];
 }
 
 export interface SqlFunction {

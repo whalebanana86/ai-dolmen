@@ -36,6 +36,7 @@ fn table(name: &str, columns: Vec<Column>) -> Table {
         indexes: vec![],
         partition_key: None,
         partition_of: None,
+        grants: vec![],
         comment: None,
     }
 }
@@ -71,6 +72,8 @@ fn database() -> Database {
                     columns: vec![column("id", "bigint")],
                     definition: " SELECT id\n   FROM public.users;".into(),
                     comment: None,
+                    indexes: vec![],
+                    grants: vec![],
                 }],
                 ..empty_schema("public")
             },

@@ -44,7 +44,33 @@ pub struct Table {
     /// Left out of the JSON when unset, so models of other tables don't change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partition_of: Option<PartitionOf>,
+    /// Privileges held by roles other than the owner.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
 }
+
+/// Privileges a role holds on a table or view, besides its owner's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grant {
+    /// A role, or `PUBLIC`.
+    pub grantee: String,
+    /// `SELECT`, `INSERT` and the like, in alphabetical order.
+    pub privileges: Vec<String>,
+    /// Whether the grantee may grant them to others.
+    pub grantable: bool,
+}
+
+/// The privileges a table or view can be granted.
+pub const TABLE_PRIVILEGES: &[&str] = &[
+    "DELETE",
+    "INSERT",
+    "MAINTAIN",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE",
+];
 
 /// Where a partition belongs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +168,11 @@ pub struct View {
     /// The view's query.
     pub definition: String,
     pub comment: Option<String>,
+    /// A materialized view's indexes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexes: Vec<Index>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

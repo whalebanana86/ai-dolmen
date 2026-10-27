@@ -306,6 +306,7 @@ mod tests {
                     indexes: vec![],
                     partition_key: None,
                     partition_of: None,
+                    grants: vec![],
                     comment: None,
                 }],
                 views: vec![],
@@ -421,6 +422,8 @@ mod tests {
             columns: vec![],
             definition: "SELECT name FROM app.users".into(),
             comment: Some("just names".into()),
+            indexes: vec![],
+            grants: vec![],
         };
         let edit = Edit::CreateView {
             schema: "app".into(),

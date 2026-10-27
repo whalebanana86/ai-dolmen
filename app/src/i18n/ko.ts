@@ -209,6 +209,8 @@ export const ko: Messages = {
     indexes: "인덱스",
     partitionKey: "파티션 기준",
     partitionOf: "파티션 소속",
+    grants: "권한",
+    noGrants: "소유자 외에는 권한이 없습니다.",
     partitions: "파티션",
     definition: "정의",
     arguments: "인자",

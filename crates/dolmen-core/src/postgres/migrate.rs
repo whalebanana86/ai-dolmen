@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use super::ddl::{self, comment_on, qualified, quote_ident, quote_literal};
 use crate::schema::{
-    Column, Constraint, ConstraintKind, Database, EnumType, FunctionKind, Identity, Schema, Table,
-    View,
+    Column, Constraint, ConstraintKind, Database, EnumType, FunctionKind, Grant, Identity, Schema,
+    TABLE_PRIVILEGES, Table, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -495,6 +495,9 @@ impl Planner {
         for index in &table.indexes {
             self.push(Phase::CreateIndex, ddl::create_index(table, index), false);
         }
+        for grant in &table.grants {
+            self.push(Phase::AlterTable, ddl::grant_statement(&name, grant), false);
+        }
         for constraint in foreign_keys(table) {
             self.add_constraint(&name, constraint);
         }
@@ -615,6 +618,51 @@ impl Planner {
                 comment_on(ddl::table_object(target), &name, target.comment.as_deref()),
                 false,
             );
+        }
+        self.privileges(Phase::AlterTable, &name, &current.grants, &target.grants);
+    }
+
+    /// GRANTs and REVOKEs that turn `current`'s privileges into `target`'s.
+    fn privileges(&mut self, phase: Phase, object: &str, current: &[Grant], target: &[Grant]) {
+        let flat = |grants: &[Grant]| -> BTreeMap<(String, String), bool> {
+            grants
+                .iter()
+                .flat_map(|g| {
+                    g.privileges
+                        .iter()
+                        .map(move |p| ((g.grantee.clone(), p.clone()), g.grantable))
+                })
+                .collect()
+        };
+        let (before, after) = (flat(current), flat(target));
+        for ((role, privilege), grantable) in &before {
+            let role_sql = ddl::grantee(role);
+            match after.get(&(role.clone(), privilege.clone())) {
+                None => self.push(
+                    phase,
+                    format!("REVOKE {privilege} ON TABLE {object} FROM {role_sql};"),
+                    false,
+                ),
+                Some(false) if *grantable => self.push(
+                    phase,
+                    format!(
+                        "REVOKE GRANT OPTION FOR {privilege} ON TABLE {object} FROM {role_sql};"
+                    ),
+                    false,
+                ),
+                _ => {}
+            }
+        }
+        for ((role, privilege), grantable) in &after {
+            let had = before.get(&(role.clone(), privilege.clone()));
+            if had.is_none() || (*grantable && had == Some(&false)) {
+                let grant = Grant {
+                    grantee: role.clone(),
+                    privileges: vec![privilege.clone()],
+                    grantable: *grantable,
+                };
+                self.push(phase, ddl::grant_statement(object, &grant), false);
+            }
         }
     }
 
@@ -775,6 +823,22 @@ impl Planner {
         for (key, view) in &current_views {
             match target_views.get(key) {
                 Some(new) if (self.keep_views || !self.reshaped) && same_view(view, new) => {
+                    let name = qualified(&key.0, &key.1);
+                    for index in &view.indexes {
+                        if !new.indexes.contains(index) {
+                            self.push(
+                                Phase::DropIndex,
+                                format!("DROP INDEX {};", qualified(&key.0, &index.name)),
+                                false,
+                            );
+                        }
+                    }
+                    for index in &new.indexes {
+                        if !view.indexes.contains(index) {
+                            self.push(Phase::CreateView, format!("{};", index.definition), false);
+                        }
+                    }
+                    self.privileges(Phase::CreateView, &name, &view.grants, &new.grants);
                     if view.comment != new.comment {
                         let object = if new.materialized {
                             "MATERIALIZED VIEW"
@@ -837,6 +901,7 @@ pub(crate) fn statements(sql: &str) -> Vec<String> {
 /// start another one the review wouldn't flag.
 fn invalid_definitions(database: &Database) -> Vec<Blocker> {
     let mut blockers = Vec::new();
+    let mut unknown_privileges = Vec::new();
     let mut check = |name: String, text: &str, statement: bool| {
         if !single(text, statement) {
             blockers.push(Blocker::InvalidDefinition { name });
@@ -872,11 +937,29 @@ fn invalid_definitions(database: &Database) -> Vec<Blocker> {
         }
         for view in &schema.views {
             check(name(&view.name), &view.definition, true);
+            for index in &view.indexes {
+                check(name(&index.name), &index.definition, true);
+            }
+        }
+        let grants = schema
+            .tables
+            .iter()
+            .map(|t| (&t.name, &t.grants))
+            .chain(schema.views.iter().map(|v| (&v.name, &v.grants)));
+        for (object, grants) in grants {
+            let known = grants
+                .iter()
+                .flat_map(|g| &g.privileges)
+                .all(|p| TABLE_PRIVILEGES.contains(&p.as_str()));
+            if !known {
+                unknown_privileges.push(Blocker::InvalidDefinition { name: name(object) });
+            }
         }
         for function in &schema.functions {
             check(name(&function.name), &function.definition, true);
         }
     }
+    blockers.extend(unknown_privileges);
     blockers
 }
 
@@ -1069,6 +1152,7 @@ mod tests {
             indexes: vec![],
             partition_key: None,
             partition_of: None,
+            grants: vec![],
             comment: None,
         }
     }
@@ -1293,6 +1377,8 @@ mod tests {
             columns: vec![column("id", "integer")],
             definition: " SELECT id\n   FROM app.users;".into(),
             comment: None,
+            indexes: vec![],
+            grants: vec![],
         };
         let with = |columns: Vec<Column>| {
             database(Schema {

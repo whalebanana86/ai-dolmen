@@ -3,6 +3,7 @@ import {
   Column,
   Constraint,
   ForeignKey,
+  Grant,
   Index,
   Introspection,
   ObjectEdit,
@@ -463,6 +464,8 @@ function TableDetail({
         )}
       </Section>
 
+      <Grants grants={table.grants ?? []} />
+
       <Section title={`${t.detail.indexes} (${table.indexes.length})`}>
         {table.indexes.length === 0 ? (
           <p className="muted">{t.detail.none}</p>
@@ -509,7 +512,48 @@ function ViewDetail({ view }: { view: View }) {
       <Section title={t.detail.definition}>
         <pre className="detail-code">{view.definition.trim()}</pre>
       </Section>
+      {view.materialized && (
+        <Section title={`${t.detail.indexes} (${view.indexes?.length ?? 0})`}>
+          {(view.indexes ?? []).length === 0 ? (
+            <p className="muted">{t.detail.none}</p>
+          ) : (
+            <ul className="definitions">
+              {view.indexes!.map((index) => (
+                <li key={index.name}>
+                  <span className="mono">{index.name}</span>
+                  <code>{index.definition}</code>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      )}
+      <Grants grants={view.grants ?? []} />
     </>
+  );
+}
+
+/** Who else may read or change the object. */
+function Grants({ grants }: { grants: Grant[] }) {
+  const t = useT();
+  return (
+    <Section title={t.detail.grants}>
+      {grants.length === 0 ? (
+        <p className="muted">{t.detail.noGrants}</p>
+      ) : (
+        <ul className="definitions">
+          {grants.map((grant) => (
+            <li key={`${grant.grantee}-${grant.grantable}`}>
+              <span className="mono">{grant.grantee}</span>
+              <code>
+                {grant.privileges.join(", ")}
+                {grant.grantable && " WITH GRANT OPTION"}
+              </code>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }
 

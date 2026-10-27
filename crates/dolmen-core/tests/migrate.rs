@@ -429,6 +429,7 @@ async fn creates_tables_views_and_functions_from_the_detail_view() {
         indexes: vec![],
         partition_key: None,
         partition_of: None,
+        grants: vec![],
         comment: Some("blog posts".into()),
     };
     let create = |edit: Edit| {
@@ -455,6 +456,8 @@ async fn creates_tables_views_and_functions_from_the_detail_view() {
             // Written as a user would: unqualified, resolved in the view's schema.
             definition: "SELECT title FROM posts".into(),
             comment: None,
+            indexes: vec![],
+            grants: vec![],
         },
     })
     .await;
@@ -620,4 +623,90 @@ async fn recreates_partitions_as_partitions() {
     apply(&session, &widen).await;
     assert_eq!(model(session.introspect().await.unwrap()), wider);
     run(&session, "DROP SCHEMA part_test CASCADE").await;
+}
+
+#[tokio::test]
+async fn keeps_grants_and_view_indexes_when_views_are_recreated() {
+    use dolmen_core::schema::Grant;
+
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let _exclusive = exclusive().await;
+    let model = |database: Database| {
+        let mut database = database;
+        database.schemas.retain(|s| s.name == "grant_test");
+        database.extensions.clear();
+        database
+    };
+    run(
+        &session,
+        "DROP SCHEMA IF EXISTS grant_test CASCADE;
+         DROP ROLE IF EXISTS dolmen_test_reader;
+         CREATE ROLE dolmen_test_reader;
+         CREATE SCHEMA grant_test;
+         CREATE TABLE grant_test.t (id int PRIMARY KEY, note text);
+         CREATE VIEW grant_test.v AS SELECT id FROM grant_test.t;
+         CREATE MATERIALIZED VIEW grant_test.m AS SELECT id FROM grant_test.t;
+         CREATE UNIQUE INDEX m_id ON grant_test.m (id);
+         GRANT SELECT ON grant_test.t, grant_test.v, grant_test.m TO dolmen_test_reader;
+         GRANT INSERT, UPDATE ON grant_test.t TO dolmen_test_reader WITH GRANT OPTION;
+         GRANT SELECT ON grant_test.v TO PUBLIC;",
+    )
+    .await;
+    let original = model(session.introspect().await.unwrap());
+    let reader = |privileges: &[&str], grantable: bool| Grant {
+        grantee: "dolmen_test_reader".into(),
+        privileges: privileges.iter().map(|p| p.to_string()).collect(),
+        grantable,
+    };
+    let schema = &original.schemas[0];
+    assert_eq!(
+        schema.tables[0].grants,
+        [
+            reader(&["SELECT"], false),
+            reader(&["INSERT", "UPDATE"], true)
+        ]
+    );
+    let view = |name: &str| schema.views.iter().find(|v| v.name == name).unwrap();
+    assert_eq!(view("m").indexes.len(), 1);
+    assert_eq!(view("v").grants.len(), 2);
+
+    // Dropping a column recreates the views, which keep their grants and indexes.
+    let mut narrower = original.clone();
+    narrower.schemas[0].tables[0].columns.pop();
+    apply(&session, &plan(&original, &narrower, &[])).await;
+    assert_eq!(model(session.introspect().await.unwrap()), narrower);
+
+    // And so does a schema recreated from nothing.
+    run(
+        &session,
+        "DROP SCHEMA grant_test CASCADE; CREATE SCHEMA grant_test",
+    )
+    .await;
+    let empty = session.introspect().await.unwrap();
+    apply(&session, &plan(&empty, &narrower, &[])).await;
+    assert_eq!(model(session.introspect().await.unwrap()), narrower);
+
+    // Taking privileges away revokes them.
+    let mut fewer = narrower.clone();
+    fewer.schemas[0].tables[0].grants.retain(|g| !g.grantable);
+    let revoke = plan(&narrower, &fewer, &[]);
+    assert_eq!(
+        revoke
+            .steps
+            .iter()
+            .map(|s| s.sql.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "REVOKE INSERT ON TABLE grant_test.t FROM dolmen_test_reader;",
+            "REVOKE UPDATE ON TABLE grant_test.t FROM dolmen_test_reader;"
+        ]
+    );
+    apply(&session, &revoke).await;
+    assert_eq!(model(session.introspect().await.unwrap()), fewer);
+    run(
+        &session,
+        "DROP SCHEMA grant_test CASCADE; DROP ROLE dolmen_test_reader",
+    )
+    .await;
 }

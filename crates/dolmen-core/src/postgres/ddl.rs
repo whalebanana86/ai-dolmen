@@ -6,8 +6,8 @@
 use serde::Deserialize;
 
 use crate::schema::{
-    Column, Constraint, EnumType, Extension, Function, Identity, Index, PartitionOf, Sequence,
-    Table, TableKind, View,
+    Column, Constraint, EnumType, Extension, Function, Grant, Identity, Index, PartitionOf,
+    Sequence, Table, TableKind, View,
 };
 
 /// Any schema object, tagged by `type` so the app can ask for one object's DDL.
@@ -58,6 +58,7 @@ pub fn create_table(schema: &str, table: &Table) -> String {
         table.comment.as_deref(),
         &table.columns,
     );
+    push_grants(&mut ddl, &name, &table.grants);
     ddl
 }
 
@@ -215,7 +216,44 @@ pub fn create_view(schema: &str, view: &View) -> String {
         view.comment.as_deref(),
         &view.columns,
     );
+    for index in &view.indexes {
+        ddl.push_str(&format!("\n{};\n", index.definition));
+    }
+    push_grants(&mut ddl, &name, &view.grants);
     ddl
+}
+
+fn push_grants(ddl: &mut String, name: &str, grants: &[Grant]) {
+    if !grants.is_empty() {
+        ddl.push('\n');
+        for grant in grants {
+            ddl.push_str(&grant_statement(name, grant));
+            ddl.push('\n');
+        }
+    }
+}
+
+/// `GRANT ... ON TABLE name TO role`, which covers views too.
+pub(crate) fn grant_statement(name: &str, grant: &Grant) -> String {
+    format!(
+        "GRANT {} ON TABLE {name} TO {}{};",
+        grant.privileges.join(", "),
+        grantee(&grant.grantee),
+        if grant.grantable {
+            " WITH GRANT OPTION"
+        } else {
+            ""
+        }
+    )
+}
+
+/// A role as GRANT and REVOKE name it: PUBLIC, or a quoted name.
+pub(crate) fn grantee(name: &str) -> String {
+    if name == "PUBLIC" {
+        name.to_owned()
+    } else {
+        quote_ident(name)
+    }
 }
 
 /// pg_get_functiondef's statement, which names the schema itself.
@@ -541,6 +579,7 @@ mod tests {
             }],
             partition_key: None,
             partition_of: None,
+            grants: vec![],
             comment: Some("orders".into()),
         };
 
@@ -582,6 +621,7 @@ COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
             indexes: vec![],
             partition_key: None,
             partition_of: None,
+            grants: vec![],
             comment: None,
         };
         assert_eq!(
@@ -600,6 +640,7 @@ COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
             indexes: vec![],
             partition_key: Some("RANGE (at)".into()),
             partition_of: None,
+            grants: vec![],
             comment: None,
         };
         assert_eq!(
@@ -616,6 +657,8 @@ COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
             columns: vec![column("id", "integer")],
             definition: " SELECT id\n   FROM posts;".into(),
             comment: None,
+            indexes: vec![],
+            grants: vec![],
         };
         assert_eq!(
             create_view("public", &view),

@@ -215,6 +215,8 @@ export const en = {
     indexes: "Indexes",
     partitionKey: "Partitioned by",
     partitionOf: "Partition of",
+    grants: "Privileges",
+    noGrants: "Only the owner has privileges.",
     partitions: "Partitions",
     definition: "Definition",
     arguments: "Arguments",
