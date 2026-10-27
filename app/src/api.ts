@@ -246,7 +246,8 @@ export type Refusal =
   | "noModel"
   | "badSnapshotPath"
   | "uncommittedChanges"
-  | "readOnly";
+  | "readOnly"
+  | "noColumns";
 
 /** Why asking the AI failed. */
 export type AiFailure =
@@ -511,7 +512,7 @@ export interface HistoryRun {
   /** Rows returned or affected. */
   rows: number | null;
   error: string | null;
-  source: "editor" | "detail" | "snapshot";
+  source: "editor" | "detail" | "snapshot" | "import";
   starred: boolean;
 }
 
@@ -557,6 +558,93 @@ export const ai = {
   },
   /** Stops the answer to question `id`; `ask` then fails with reason "cancelled". */
   cancel: (id: number) => invoke<void>("ai_cancel", { id }),
+};
+
+export type Delimiter = "comma" | "tab" | "semicolon" | "pipe";
+export const DELIMITERS: Delimiter[] = ["comma", "tab", "semicolon", "pipe"];
+
+/** Where exported rows come from: a table or view, or one statement run read-only. */
+export type DataSource = { kind: "table"; schema: string; name: string } | { kind: "query"; sql: string };
+
+export type DataFormat =
+  /** NULL is an empty field and an empty string `""`, as COPY reads them. */
+  | { kind: "csv"; delimiter: Delimiter; header: boolean; bom: boolean }
+  | { kind: "json" }
+  /** INSERT statements into `table`, written as given. */
+  | { kind: "insert"; table: string };
+
+export interface Transferred {
+  rows: number;
+  /** Bytes written to the file, or read from it. */
+  bytes: number;
+}
+
+export type FileEncoding = "utf8" | "eucKr";
+
+export interface CsvOptions {
+  delimiter: Delimiter;
+  /** The first row names the columns. */
+  header: boolean;
+  encoding: FileEncoding;
+}
+
+export interface CsvPreview {
+  /** The delimiter it was read with: the one asked for, or the likeliest. */
+  delimiter: Delimiter;
+  /** The first rows as read, the header row included. */
+  rows: string[][];
+  /** Not valid UTF-8, but reads as EUC-KR. */
+  looksEucKr: boolean;
+  size: number;
+}
+
+export const data = {
+  /** Writes rows to `path`, calling `onProgress` with the rows written so far. */
+  export: (
+    sessionId: number,
+    jobId: number,
+    source: DataSource,
+    format: DataFormat,
+    path: string,
+    onProgress: (rows: number) => void,
+  ) => {
+    const progress = new Channel<number>();
+    progress.onmessage = onProgress;
+    return invoke<Transferred>("data_export", { sessionId, jobId, source, format, path, progress });
+  },
+  /** The first rows of a CSV file; without a delimiter, the likeliest one is used. */
+  preview: (path: string, delimiter: Delimiter | null, encoding: FileEncoding) =>
+    invoke<CsvPreview>("data_import_preview", { path, delimiter, encoding }),
+  /**
+   * Appends a CSV file's rows to a table in one transaction. `columns` names,
+   * for each column of the file, the table column it fills, or null to skip it.
+   * `onProgress` gets the bytes read so far.
+   */
+  import: (
+    sessionId: number,
+    jobId: number,
+    schema: string,
+    table: string,
+    path: string,
+    options: CsvOptions,
+    columns: (string | null)[],
+    onProgress: (bytes: number) => void,
+  ) => {
+    const progress = new Channel<number>();
+    progress.onmessage = onProgress;
+    return invoke<Transferred>("data_import", {
+      sessionId,
+      jobId,
+      schema,
+      table,
+      path,
+      options,
+      columns,
+      progress,
+    });
+  },
+  /** Stops an export or import; it then fails with query_canceled. */
+  cancel: (jobId: number) => invoke<void>("data_transfer_cancel", { jobId }),
 };
 
 /** A range in editor text, in UTF-16 code units like JavaScript string indices. */

@@ -58,6 +58,8 @@ pub enum Source {
     Detail,
     /// A snapshot applied to the database.
     Snapshot,
+    /// A file's rows imported into a table.
+    Import,
 }
 
 /// A run to record; the store adds the id and masks secrets.

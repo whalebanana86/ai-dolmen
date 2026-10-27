@@ -28,7 +28,7 @@ pub enum Error {
     /// The session is closed.
     #[error("connection is closed")]
     Closed,
-    /// Reading or writing saved connections or their passwords failed.
+    /// Reading or writing saved connections, their passwords, or files failed.
     #[error("{message}")]
     Storage { message: String },
     /// A safety rule stopped the action, such as applying a plan to a database
@@ -82,6 +82,8 @@ pub enum Refusal {
     UncommittedChanges,
     /// The connection is read-only for now.
     ReadOnly,
+    /// An export's statement returns no columns, or an import fills none.
+    NoColumns,
 }
 
 impl From<keyring_core::Error> for Error {

@@ -4,6 +4,7 @@ mod history;
 mod pg;
 mod snapshot;
 mod sql;
+mod transfer;
 
 use dolmen_core::ai::ApiKeys;
 use dolmen_core::connections::{ConnectionStore, native_credential_store};
@@ -50,6 +51,10 @@ pub fn run() {
             pg::pg_set_read_only,
             pg::pg_assess,
             pg::pg_explain,
+            transfer::data_export,
+            transfer::data_import_preview,
+            transfer::data_import,
+            transfer::data_transfer_cancel,
             pg::pg_set_schema,
             pg::pg_current_schema,
             pg::object_plan,

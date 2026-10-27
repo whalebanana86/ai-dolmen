@@ -19,6 +19,7 @@ pub mod ddl;
 pub mod edit;
 mod introspect;
 pub mod migrate;
+pub mod transfer;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const INTROSPECTION_ATTEMPTS: u64 = 5;
@@ -464,7 +465,7 @@ impl Session {
             Risk::EveryRow { .. } => {
                 let explain = format!(
                     "EXPLAIN (FORMAT JSON) {}",
-                    statement.trim().trim_end_matches(';')
+                    crate::sql::without_terminator(statement.trim())
                 );
                 // The extended protocol takes one statement, so nothing that
                 // slipped past the statement splitter runs before the user agrees.
@@ -585,7 +586,10 @@ impl Session {
             "FORMAT JSON"
         };
         let prefix = format!("EXPLAIN ({options}) ");
-        let explain = format!("{prefix}{}", statement.trim().trim_end_matches(';'));
+        let explain = format!(
+            "{prefix}{}",
+            crate::sql::without_terminator(statement.trim())
+        );
         // The extended protocol takes one statement, so a second one can't
         // ride along and escape the rollback.
         let result = if analyze {

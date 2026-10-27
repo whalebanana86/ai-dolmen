@@ -30,6 +30,7 @@ export const en = {
       uncommittedChanges:
         "The snapshot folder has changes that aren't committed. Commit or discard them before switching branches.",
       readOnly: "The connection is read-only. Allow writing with the lock in the toolbar first.",
+      noColumns: "There are no columns to export or import.",
     },
     ai: {
       noApiKey: "There's no Anthropic API key yet. Add one in Settings (⚙) to use AI.",
@@ -142,6 +143,8 @@ export const en = {
   },
 
   results: {
+    export: "Export…",
+    exportTitle: "Saves every row of this result to a file",
     statement: (n: number) => `Statement ${n}`,
     revealTitle: "Click to select it in the editor",
     rowsAffected: (n: number) => plural(n, "row affected", "rows affected"),
@@ -164,6 +167,8 @@ export const en = {
     },
     doubleClickToQuery: "Double-click to query",
     menu: {
+      exportData: "Export data…",
+      importData: "Import data…",
       refresh: "Refresh",
       dropSchema: "Drop schema…",
       showErd: "Show ERD",
@@ -347,7 +352,7 @@ export const en = {
     star: "Star: kept until you remove it",
     unstar: "Remove the star",
     remove: "Delete",
-    sources: { editor: "", detail: "Detail panel", snapshot: "Snapshot" },
+    sources: { editor: "", detail: "Detail panel", snapshot: "Snapshot", import: "Import" },
     rows: (n: number) => plural(n, "row", "rows"),
     cancelled: "Cancelled",
     today: "Today",
@@ -510,6 +515,43 @@ export const en = {
       hashBatches: (batches: number) =>
         `The hash table didn't fit in memory and was split into ${batches} batches (work_mem).`,
     },
+  },
+
+  transfer: {
+    exportTitle: (label: string) => `Export ${label}`,
+    importTitle: (label: string) => `Import into ${label}`,
+    queryResults: "query results",
+    format: "Format",
+    formats: { csv: "CSV", json: "JSON", insert: "SQL INSERT" },
+    delimiter: "Delimiter",
+    delimiters: { comma: "Comma (,)", tab: "Tab", semicolon: "Semicolon (;)", pipe: "Pipe (|)" },
+    header: "First row names the columns",
+    bom: "For Excel (UTF-8 with a byte order mark)",
+    insertTable: "Table in the INSERT statements",
+    queryNote: "Runs the statement again, read-only, and saves every row it returns, not only the ones shown.",
+    export: "Export…",
+    saveTitle: "Save as",
+    exporting: (rows: number) => `Exporting… ${plural(rows, "row", "rows")}`,
+    exported: (rows: number, size: string) => `Saved ${plural(rows, "row", "rows")} (${size}).`,
+    cancelled: "Stopped. Nothing was changed or saved.",
+    chooseFile: "Choose a file…",
+    otherFile: "Another file…",
+    fileFilter: "CSV, TSV and text files",
+    encoding: "Encoding",
+    encodings: { utf8: "UTF-8", eucKr: "EUC-KR (CP949, Korean Excel)" },
+    readAsEucKr: "The file isn't UTF-8, so it is read as EUC-KR, as Korean Excel saves CSV.",
+    column: (n: number) => `Column ${n}`,
+    skip: "Skip",
+    firstRows: (n: number) => `The first ${plural(n, "row", "rows")} of the file`,
+    duplicate: (name: string) => `Two columns of the file go into ${name}.`,
+    noneMapped: "Choose at least one table column to fill.",
+    identity: (names: string) =>
+      `${names} get the file's values. The identity's next number doesn't move past them, so set its sequence if new rows would collide.`,
+    allOrNothing: "The rows are added in one transaction: if one fails, none are.",
+    emptyFile: "The file has no rows.",
+    import: "Import",
+    importing: (percent: number) => `Importing… ${percent}%`,
+    imported: (rows: number, table: string) => `Imported ${plural(rows, "row", "rows")} into ${table}.`,
   },
 
   environments: {

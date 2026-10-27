@@ -28,6 +28,8 @@ pub struct Sessions {
     open: Mutex<HashMap<u64, Open>>,
     /// The sessions explaining a statement for an open session, by its id, to cancel.
     explaining: Mutex<HashMap<u64, Arc<Session>>>,
+    /// The sessions exporting or importing data, by an id the UI chose, to cancel.
+    jobs: Mutex<HashMap<u64, Arc<Session>>>,
 }
 
 struct Open {
@@ -59,6 +61,22 @@ impl Sessions {
             .unwrap()
             .get(&id)
             .is_some_and(|open| open.apply_allowed)
+    }
+
+    /// Opens a session of its own to the database of session `id`, for a
+    /// long job the UI can cancel by `job`.
+    pub(crate) async fn start_job(&self, id: u64, job: u64) -> Result<Arc<Session>, Error> {
+        let worker = Arc::new(self.get(id)?.another().await?);
+        self.jobs.lock().unwrap().insert(job, Arc::clone(&worker));
+        Ok(worker)
+    }
+
+    pub(crate) fn end_job(&self, job: u64) {
+        self.jobs.lock().unwrap().remove(&job);
+    }
+
+    pub(crate) fn job(&self, job: u64) -> Option<Arc<Session>> {
+        self.jobs.lock().unwrap().get(&job).cloned()
     }
 
     fn read_only(&self, id: u64) -> bool {

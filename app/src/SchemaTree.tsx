@@ -36,6 +36,10 @@ export interface TreeActions {
   showErd: (schema: string, table: string | null) => void;
   /** Starts writing a new table, view or function in the schema. */
   create: (schema: string, type: NewObject) => void;
+  /** Saves a table's or view's rows to a file. */
+  exportData: (schema: string, relation: string) => void;
+  /** Appends a file's rows to a table. */
+  importData: (schema: string, table: Table) => void;
   refresh: () => void;
 }
 
@@ -405,6 +409,8 @@ function relationMenu(
     { separator: true },
     { label: t.tree.menu.selectRows, onSelect: () => actions.insert(`SELECT * FROM ${name} LIMIT 1000;`, true) },
     { label: t.tree.menu.countRows, onSelect: () => actions.insert(`SELECT count(*) FROM ${name};`, true) },
+    { label: t.tree.menu.exportData, onSelect: () => actions.exportData(schema, relation.name) },
+    ...(isTable ? [{ label: t.tree.menu.importData, onSelect: () => actions.importData(schema, relation) }] : []),
     { separator: true },
     {
       label: t.tree.menu.generateSelect,

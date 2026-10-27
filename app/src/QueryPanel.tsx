@@ -1,12 +1,14 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import {
+  DataSource,
   ExplainOutput,
   Introspection,
   ObjectRef,
   SavedConnection,
   SnapshotRemote,
   SchemaObject,
+  Table,
   SessionInfo,
   SnapshotStatus,
   StatementResult,
@@ -22,6 +24,8 @@ import {
 } from "./api";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
 import { EnvironmentBadge } from "./ConnectionForm";
+import { ExportDialog } from "./ExportDialog";
+import { ImportDialog } from "./ImportDialog";
 import { CreatePanel, DetailPanel } from "./DetailPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { HistoryPanel } from "./HistoryPanel";
@@ -35,6 +39,7 @@ import { SettingsButton, SettingsDialog } from "./SettingsDialog";
 import { SnapshotPanel } from "./SnapshotPanel";
 import { SqlEditor } from "./SqlEditor";
 import { SqlTabs } from "./SqlTabs";
+import { quoteIdent, statementTable } from "./sqlIdent";
 import type { Messages } from "./i18n/en";
 import { useT } from "./settings";
 
@@ -109,6 +114,12 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   readOnlyRef.current = readOnly;
   const [confirmingWritable, setConfirmingWritable] = useState(false);
   const [lockBusy, setLockBusy] = useState(false);
+  // The export or import dialog, while open.
+  const [transfer, setTransfer] = useState<
+    | { kind: "export"; sessionId: number; source: DataSource; label: string; fileName: string; insertTable: string }
+    | { kind: "import"; schema: string; table: Table }
+    | null
+  >(null);
   // Risky statements waiting for the user to say whether to run them.
   const [risky, setRisky] = useState<{ statements: RiskyStatement[]; decide: (run: boolean) => void } | null>(null);
   // Editor tabs, each a console with its own session, kept per connection.
@@ -674,6 +685,19 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     }
   }
 
+  /** Opens the export of a statement's rows, run again on the active tab's session. */
+  function exportResult(statement: string) {
+    const table = statementTable(statement);
+    setTransfer({
+      kind: "export",
+      sessionId: active?.sessionId ?? session.id,
+      source: { kind: "query", sql: statement },
+      label: table ?? t.transfer.queryResults,
+      fileName: table?.split(".").pop()?.replace(/"/g, "") ?? "result",
+      insertTable: table ?? "result",
+    });
+  }
+
   /** Locks or unlocks writing; unlocking production takes a second click. */
   async function toggleReadOnly() {
     const next = !readOnly;
@@ -794,6 +818,16 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                 showDetail: setDetail,
                 showErd: (schema, focus) => setErd({ schema, focus }),
                 create: (schema, type) => setCreating({ schema, type }),
+                exportData: (schema, relation) =>
+                  setTransfer({
+                    kind: "export",
+                    sessionId: session.id,
+                    source: { kind: "table", schema, name: relation },
+                    label: `${schema}.${relation}`,
+                    fileName: relation,
+                    insertTable: `${quoteIdent(schema)}.${quoteIdent(relation)}`,
+                  }),
+                importData: (schema, table) => setTransfer({ kind: "import", schema, table }),
               }}
               width={layout.treeWidth}
             />
@@ -891,6 +925,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                       result={result}
                       sql={statement.statement}
                       onReveal={() => revealStatement(statement)}
+                      onExport={() => exportResult(statement.statement)}
                     />
                   ))}
                   {outcome.failure && (
@@ -1021,6 +1056,15 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         />
       )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {transfer?.kind === "export" && <ExportDialog {...transfer} onClose={() => setTransfer(null)} />}
+      {transfer?.kind === "import" && (
+        <ImportDialog
+          sessionId={session.id}
+          schema={transfer.schema}
+          table={transfer.table}
+          onClose={() => setTransfer(null)}
+        />
+      )}
       {risky && (
         <RiskDialog
           risky={risky.statements}

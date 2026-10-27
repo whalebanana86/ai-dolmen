@@ -101,6 +101,19 @@ readable only by you, keeps 90 days and up to 10,000 queries per connection
 and never keeps result rows. Turn it off per connection for databases whose SQL
 shouldn't be kept. The editor's text is kept per connection as well.
 
+## Data import and export
+
+Right-click a table or view and choose **Export data…**, or press **Export…**
+on a result, to save every row as CSV (with a byte order mark for Excel if you
+like), JSON or `INSERT` statements. A result's statement runs again in a
+read-only transaction, so all its rows are saved, not only the ones shown.
+
+**Import data…** on a table appends a CSV file's rows with `COPY`, in one
+transaction. Dolmen guesses the delimiter, reads files that Korean Excel saves
+in EUC-KR (CP949), matches the file's columns to the table's by name and lets
+you skip some. A bad value stops the import with its line and column, and
+nothing is added.
+
 ## Production safety
 
 Give a saved connection an environment (development, staging or production)

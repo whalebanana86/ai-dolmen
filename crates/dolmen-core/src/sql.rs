@@ -210,6 +210,36 @@ struct Token<'a> {
     depth: u32,
 }
 
+/// The statement up to its last token: without the semicolon, comments and
+/// space after it, so it can be wrapped in more SQL.
+pub fn without_terminator(statement: &str) -> &str {
+    let bytes = statement.as_bytes();
+    let mut end = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                i = line_comment_end(bytes, i);
+                continue;
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i = block_comment_end(bytes, i);
+                continue;
+            }
+            byte if byte.is_ascii_whitespace() || byte == b';' => {
+                i += 1;
+                continue;
+            }
+            b'\'' => i = quoted_end(bytes, i, b'\'', is_escape_string(bytes, i)),
+            b'"' => i = quoted_end(bytes, i, b'"', false),
+            b'$' => i = dollar_quoted_end(bytes, i).unwrap_or(i + 1),
+            _ => i += 1,
+        }
+        end = i;
+    }
+    &statement[..end]
+}
+
 /// Words, quoted names and punctuation, with comments and string contents
 /// left out (a string is one `''` token).
 fn tokens(sql: &str) -> Vec<Token<'_>> {
@@ -366,6 +396,16 @@ fn is_identifier_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn strips_what_follows_the_last_token() {
+        assert_eq!(without_terminator("SELECT 1; -- done\n"), "SELECT 1");
+        assert_eq!(without_terminator("SELECT 1 -- note\n;"), "SELECT 1");
+        assert_eq!(without_terminator("SELECT ';' /* c */ ;;"), "SELECT ';'");
+        assert_eq!(without_terminator("SELECT $$a;$$"), "SELECT $$a;$$");
+        assert_eq!(without_terminator("SELECT '이름'  "), "SELECT '이름'");
+    }
+
     use super::*;
 
     fn split(sql: &str) -> Vec<&str> {

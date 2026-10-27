@@ -10,9 +10,11 @@ interface Props {
   sql: string;
   /** Selects the statement in the editor. */
   onReveal: () => void;
+  /** Saves the statement's rows to a file. */
+  onExport: () => void;
 }
 
-export function ResultView({ index, result, sql, onReveal }: Props) {
+export function ResultView({ index, result, sql, onReveal, onExport }: Props) {
   const t = useT();
   const table = statementTable(sql);
   const count =
@@ -36,6 +38,11 @@ export function ResultView({ index, result, sql, onReveal }: Props) {
         )}
         {" · "}
         {count}
+        {result.kind === "rows" && result.columns.length > 0 && (
+          <button className="result-export" onClick={onExport} title={t.results.exportTitle}>
+            {t.results.export}
+          </button>
+        )}
       </p>
       <StatementLine sql={sql} onReveal={onReveal} />
       {result.kind === "rows" && <ResultGrid columns={result.columns} rows={result.rows} />}
