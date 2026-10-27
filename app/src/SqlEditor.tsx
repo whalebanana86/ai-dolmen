@@ -167,7 +167,7 @@ const theme = EditorView.theme({
   ".cm-content": { caretColor: "var(--text)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text)" },
   ".cm-gutters": { backgroundColor: "var(--surface)", color: "var(--muted)", border: "none" },
-  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--active-line)" },
+  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--editor-active-line)" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
     { backgroundColor: "var(--selection)" },
   ".cm-selectionMatch": { backgroundColor: "var(--selection-match)" },

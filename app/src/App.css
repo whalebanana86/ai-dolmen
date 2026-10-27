@@ -10,6 +10,8 @@
   --danger-bg: #fff0f0;
   --null: #9a9aa3;
   --active-line: #f3f4f8;
+  /* See-through, so a selection on the cursor's line shows: the editor draws selections beneath its lines. */
+  --editor-active-line: rgba(30, 45, 110, 0.05);
   --selection: #d0dafc;
   --selection-match: #e4e9fd;
   --syntax-keyword: #8b3fb8;
@@ -50,6 +52,7 @@
     --danger-bg: #3a2224;
     --null: #6b6b75;
     --active-line: #2a2a2f;
+    --editor-active-line: rgba(240, 240, 255, 0.035);
     --selection: #34406b;
     --selection-match: #2f3550;
     --syntax-keyword: #c792ea;
@@ -82,6 +85,7 @@
   --danger-bg: #3a2224;
   --null: #6b6b75;
   --active-line: #2a2a2f;
+  --editor-active-line: rgba(240, 240, 255, 0.035);
   --selection: #34406b;
   --selection-match: #2f3550;
   --syntax-keyword: #c792ea;
