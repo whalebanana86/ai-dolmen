@@ -52,16 +52,23 @@ jobs:
             echo "::error::The tag $GITHUB_REF_NAME must be v$version, the version in Cargo.toml, and app/package.json must say $version too (it says $app)."
             exit 1
           fi
-      # Made once here, so the builds don't race to create it.
+      # Made once here, so the builds don't race to create it. Its id comes
+      # from making it: looked up by tag afterwards, a new draft isn't always
+      # found, and builds without an id upload nothing.
       - name: Create the draft release
         id: draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-            --title "Dolmen $GITHUB_REF_NAME" \
-            --notes-file .github/release-notes.md --generate-notes
-          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -1)" >> "$GITHUB_OUTPUT"
+          id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$GITHUB_REF_NAME" -f name="Dolmen $GITHUB_REF_NAME" \
+            -F draft=true -F generate_release_notes=true \
+            -F body=@.github/release-notes.md --jq .id)
+          if [ -z "$id" ]; then
+            echo "::error::Creating the draft release gave no id."
+            exit 1
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
     name: ${{ matrix.name }}
@@ -169,4 +176,7 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          RELEASE: ${{ needs.release.outputs.id }}
+        run: |
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE" \
+            -F draft=false -f make_latest=true --jq '"Published " + .html_url'
