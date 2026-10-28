@@ -188,9 +188,9 @@ DOLMEN_TEST_PG_HOST=localhost DOLMEN_TEST_PG_PORT=55432 cargo test
 
 릴리스하려면 `Cargo.toml`(`[workspace.package]`)과 `app/package.json`의 버전을
 정해 커밋하고, `v0.2.0`처럼 같은 버전의 태그를 푸시하세요.
-[Release 워크플로](.github/workflows/release.yml)가 설치 파일을 빌드해 초안
-릴리스에 붙이면, 검토한 뒤 직접 게시합니다. 워크플로에 적힌 Apple 시크릿이 있으면
-macOS 앱을 서명하고 공증합니다.
+[Release 워크플로](.github/workflows/release.yml)가 설치 파일을 빌드해 릴리스에
+붙이고, 모든 플랫폼의 설치 파일과 업데이트 파일이 올라가면 공개합니다. 워크플로에 적힌
+Apple 시크릿이 있으면 macOS 앱을 서명하고 공증합니다.
 
 업데이트 파일은 `TAURI_SIGNING_PRIVATE_KEY` 시크릿의 개인 키로 서명하고, 설치된 앱은
 그 키로 서명된 업데이트만 받습니다. 공개 키는 `app/src-tauri/tauri.conf.json`에

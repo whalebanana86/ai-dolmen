@@ -1,9 +1,10 @@
 name: Release
 
 # A version tag such as v0.1.0 builds the desktop app for macOS, Windows and
-# Linux and attaches the installers to a draft GitHub release, to check and
-# publish by hand. Run by hand (Actions → Release → Run workflow), it builds the
-# installers as workflow artifacts only, without a release.
+# Linux, attaches the installers to a draft GitHub release, and publishes it
+# once every platform's installer and update are there. Run by hand (Actions →
+# Release → Run workflow), it builds the installers as workflow artifacts only,
+# without a release.
 #
 # Installed apps update from the latest.json the builds attach, and only
 # accept packages signed with the key in the TAURI_SIGNING_PRIVATE_KEY secret
@@ -142,7 +143,7 @@ jobs:
   # changing and uploading it again, so two builds finishing together can drop
   # one. Re-running that build adds it back.
   updates:
-    name: Check every platform can update
+    name: Check every platform can update, then publish
     needs: [release, build]
     runs-on: ubuntu-latest
     permissions:
@@ -164,3 +165,8 @@ jobs:
             echo "::error::latest.json has no update for $missing. Re-run that build, then this job."
             exit 1
           fi
+      # Installed apps update to the latest release, so only a complete one goes out.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

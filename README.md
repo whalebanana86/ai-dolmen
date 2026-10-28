@@ -204,9 +204,10 @@ Without `DOLMEN_TEST_PG_HOST`, tests that need a server are skipped.
 
 To release, set the version in `Cargo.toml` (`[workspace.package]`) and
 `app/package.json`, commit, and push a matching tag such as `v0.2.0`. The
-[Release workflow](.github/workflows/release.yml) builds the installers and
-attaches them to a draft release to review and publish. It signs and notarizes
-the macOS app when the Apple secrets it lists are set.
+[Release workflow](.github/workflows/release.yml) builds the installers,
+attaches them to a release, and publishes it once every platform's installer
+and update are there. It signs and notarizes the macOS app when the Apple
+secrets it lists are set.
 
 Update packages are signed with the private key in the `TAURI_SIGNING_PRIVATE_KEY`
 secret, and installed apps accept only updates signed with it: its public key
