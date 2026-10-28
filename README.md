@@ -22,8 +22,8 @@ SmartScreen asks; choose *More info → Run anyway*.
 
 To update, choose *Settings (⚙) → Updates → Check for updates*. Dolmen installs
 a newer release only if it is signed with the project's key, then restarts; it
-looks for one only when you ask. On Linux, the AppImage updates this way; for a
-`.deb` or `.rpm`, install the new package from Releases.
+looks for one only when you ask. On Linux, a `.deb` or `.rpm` install asks for
+your password to install the update.
 
 ## Planned features
 
