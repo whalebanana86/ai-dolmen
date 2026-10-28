@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type MenuItem =
   | { label: string; onSelect: () => void; danger?: boolean }
-  | { separator: true };
+  | { separator: true }
+  /** A line of information, not a choice. */
+  | { note: string };
 
 interface Props {
   x: number;
@@ -53,6 +55,10 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       {items.map((item, i) =>
         "separator" in item ? (
           <div key={i} className="context-menu-separator" />
+        ) : "note" in item ? (
+          <div key={i} className="context-menu-note">
+            {item.note}
+          </div>
         ) : (
           <button
             key={i}

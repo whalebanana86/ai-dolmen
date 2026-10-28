@@ -138,6 +138,7 @@ export const en = {
     disconnect: "Disconnect",
     snapshot: "Snapshot",
     snapshotTitle: "Compare the database with its schema snapshot",
+    snapshotChanges: (n: number) => (n === 0 ? "matches the database" : plural(n, "change", "changes")),
     erd: "ERD",
     erdTitle: "Show the tables and their relationships as a diagram",
     running: "Running…",
@@ -153,6 +154,8 @@ export const en = {
     hint: "Hint:",
     locationNotSaved: (error: string) =>
       `The location is in use but couldn't be saved with the connection: ${error}`,
+    panels: "Panels",
+    tree: "Schema tree",
     toggleTree: (shown: boolean) => `${shown ? "Hide" : "Show"} the schema tree (⌘B)`,
     toggleResults: (shown: boolean) => `${shown ? "Hide" : "Show"} the results (⌘J)`,
     resizeTree: "Drag to resize the schema tree; double-click to reset",

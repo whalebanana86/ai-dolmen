@@ -773,6 +773,13 @@ button.danger {
   background: var(--border);
 }
 
+.context-menu-note {
+  padding: 3px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 /* Environments and the read-only lock */
 
 .environment-badge {
@@ -880,24 +887,72 @@ button.danger {
   white-space: nowrap;
 }
 
-/* Toolbar badge */
-
-.badge {
-  display: inline-block;
-  min-width: 18px;
-  margin-left: 6px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 11px;
-  line-height: 18px;
-  text-align: center;
+/* The connection's name, which opens its menu. */
+.connection-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-color: transparent;
+  background: transparent;
 }
 
-.badge.ok {
+.connection-button:hover,
+.connection-button[aria-expanded="true"] {
+  background: var(--active-line);
+}
+
+/* Icons down the left edge that open the workspace's panels. */
+.activity-bar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 44px;
+  padding: 8px 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.activity-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.activity-button:hover:not(:disabled) {
+  background: var(--active-line);
+  color: var(--text);
+}
+
+.activity-button[aria-pressed="true"] {
   background: var(--selection-match);
   color: var(--accent);
+}
+
+.activity-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
 }
 
 /* Side panel (schema snapshot) */
@@ -1604,17 +1659,6 @@ body.resizing-horizontal * {
   bottom: 0;
   left: -1px;
   background: transparent;
-}
-
-.panel-toggle {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 5px;
-  color: var(--muted);
-}
-
-.panel-toggle[aria-pressed="true"] {
-  color: var(--text);
 }
 
 /* Detail panel: a table's, view's or function's details, DDL and editor */

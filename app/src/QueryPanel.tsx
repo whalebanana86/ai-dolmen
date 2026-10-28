@@ -22,7 +22,9 @@ import {
   snapshots,
   sqlText,
 } from "./api";
+import { ActivityBar, BranchIcon, DatabaseIcon, DiagramIcon, GearIcon, HistoryIcon, ResultsIcon } from "./ActivityBar";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
+import { ContextMenu } from "./ContextMenu";
 import { AI_ENABLED } from "./features";
 import { EnvironmentBadge } from "./ConnectionForm";
 import { ExportDialog } from "./ExportDialog";
@@ -37,7 +39,7 @@ import { NO_CHANGES, PendingRows, changeCount } from "./rowEdits";
 import { PlanView } from "./PlanView";
 import { RiskDialog, RiskyStatement } from "./RiskDialog";
 import { SchemaTree } from "./SchemaTree";
-import { SettingsButton, SettingsDialog } from "./SettingsDialog";
+import { SettingsDialog } from "./SettingsDialog";
 import { SnapshotPanel } from "./SnapshotPanel";
 import { SqlEditor } from "./SqlEditor";
 import { SqlTabs } from "./SqlTabs";
@@ -159,6 +161,8 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     setTabs((current) => current?.map((tab) => (tab.id === id ? { ...tab, ...change(tab) } : tab)) ?? current);
   }, []);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // The connection's menu, under its name, while open.
+  const [connectionMenu, setConnectionMenu] = useState<{ x: number; y: number } | null>(null);
   const [introspection, setIntrospection] = useState<Introspection | null>(null);
   const [loadingSchema, setLoadingSchema] = useState(false);
   const runCount = useRef(0);
@@ -764,12 +768,24 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   return (
     <main className={session.environment ? `workspace environment-${session.environment}` : "workspace"}>
       <div className="toolbar">
-        <strong>Dolmen</strong>
-        {session.environment && <EnvironmentBadge environment={session.environment} />}
-        <span className="toolbar-label" title={session.address}>
-          {session.label}
-        </span>
-        <span className="muted">PostgreSQL {session.serverVersion}</span>
+        <button
+          className="connection-button"
+          // A click on the open menu's button closes it, rather than closing and opening it again.
+          onMouseDown={(e) => connectionMenu && e.stopPropagation()}
+          onClick={(e) => {
+            const box = e.currentTarget.getBoundingClientRect();
+            setConnectionMenu(connectionMenu ? null : { x: box.left, y: box.bottom + 4 });
+          }}
+          title={session.address}
+          aria-haspopup="menu"
+          aria-expanded={!!connectionMenu}
+        >
+          {session.environment && <EnvironmentBadge environment={session.environment} />}
+          <span className="toolbar-label">{session.label}</span>
+          <span className="muted" aria-hidden="true">
+            ▾
+          </span>
+        </button>
         <button
           className={`lock-toggle ${readOnly ? "locked" : "unlocked"}`}
           onClick={toggleReadOnly}
@@ -780,24 +796,6 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         >
           <LockIcon locked={readOnly} />
           {confirmingWritable ? t.workspace.confirmWritable : readOnly ? t.workspace.readOnly : t.workspace.writable}
-        </button>
-        <button
-          className="icon-button panel-toggle"
-          onClick={() => togglePanel("treeVisible")}
-          aria-pressed={layout.treeVisible}
-          title={t.workspace.toggleTree(layout.treeVisible)}
-          aria-label={t.workspace.toggleTree(layout.treeVisible)}
-        >
-          <PanelIcon side="left" shown={layout.treeVisible} />
-        </button>
-        <button
-          className="icon-button panel-toggle"
-          onClick={() => togglePanel("resultsVisible")}
-          aria-pressed={layout.resultsVisible}
-          title={t.workspace.toggleResults(layout.resultsVisible)}
-          aria-label={t.workspace.toggleResults(layout.resultsVisible)}
-        >
-          <PanelIcon side="bottom" shown={layout.resultsVisible} />
         </button>
         <span className="spacer" />
         {running ? (
@@ -820,29 +818,78 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             {t.ai.button}
           </button>
         )}
-        <button onClick={() => setHistoryOpen(true)} title={t.history.buttonTitle}>
-          {t.history.button}
-        </button>
-        <button
-          onClick={() => setErd({ schema: introspection?.defaultSchema ?? null, focus: null })}
-          disabled={!introspection}
-          title={t.workspace.erdTitle}
-        >
-          {t.workspace.erd}
-        </button>
-        <button onClick={() => setSnapshotOpen(true)} title={t.workspace.snapshotTitle}>
-          {t.workspace.snapshot}
-          {snapshotStatus && (
-            <span className={`badge ${snapshotStatus.changes.length > 0 ? "" : "ok"}`}>
-              {snapshotStatus.changes.length > 0 ? snapshotStatus.changes.length : "✓"}
-            </span>
-          )}
-        </button>
-        <button onClick={disconnect}>{t.workspace.disconnect}</button>
-        <SettingsButton onClick={() => setSettingsOpen(true)} />
       </div>
+      {connectionMenu && (
+        <ContextMenu
+          x={connectionMenu.x}
+          y={connectionMenu.y}
+          items={[
+            { note: session.address },
+            { note: `PostgreSQL ${session.serverVersion}` },
+            { separator: true },
+            { label: t.workspace.disconnect, onSelect: disconnect },
+          ]}
+          onClose={() => setConnectionMenu(null)}
+        />
+      )}
 
       <div className="workspace-body">
+        <ActivityBar
+          label={t.workspace.panels}
+          top={[
+            {
+              key: "tree",
+              label: t.workspace.tree,
+              title: t.workspace.toggleTree(layout.treeVisible),
+              icon: <DatabaseIcon />,
+              pressed: layout.treeVisible,
+              onClick: () => togglePanel("treeVisible"),
+            },
+            {
+              key: "history",
+              label: t.history.button,
+              title: t.history.buttonTitle,
+              icon: <HistoryIcon />,
+              pressed: historyOpen,
+              onClick: () => setHistoryOpen(true),
+            },
+            {
+              key: "erd",
+              label: t.workspace.erd,
+              title: t.workspace.erdTitle,
+              icon: <DiagramIcon />,
+              pressed: erd !== null,
+              disabled: !introspection,
+              onClick: () => setErd({ schema: introspection?.defaultSchema ?? null, focus: null }),
+            },
+            {
+              key: "snapshot",
+              label: t.workspace.snapshot,
+              title: snapshotStatus
+                ? `${t.workspace.snapshotTitle} · ${t.workspace.snapshotChanges(snapshotStatus.changes.length)}`
+                : t.workspace.snapshotTitle,
+              icon: <BranchIcon />,
+              pressed: snapshotOpen,
+              badge: snapshotStatus?.changes.length,
+              onClick: () => setSnapshotOpen(true),
+            },
+          ]}
+          bottom={[
+            {
+              key: "results",
+              label: t.workspace.toggleResults(layout.resultsVisible),
+              icon: <ResultsIcon shown={layout.resultsVisible} />,
+              pressed: layout.resultsVisible,
+              onClick: () => togglePanel("resultsVisible"),
+            },
+            {
+              key: "settings",
+              label: t.common.settings,
+              icon: <GearIcon />,
+              onClick: () => setSettingsOpen(true),
+            },
+          ]}
+        />
         {layout.treeVisible && (
           <>
             <SchemaTree
@@ -1154,7 +1201,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   );
 }
 
-/** A panel-layout icon with the left or bottom panel filled in while it shows. */
+/** A padlock, closed while the connection is read-only. */
 function LockIcon({ locked }: { locked: boolean }) {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
@@ -1169,21 +1216,6 @@ function LockIcon({ locked }: { locked: boolean }) {
   );
 }
 
-function PanelIcon({ side, shown }: { side: "left" | "bottom"; shown: boolean }) {
-  const panel =
-    side === "left" ? { x: 2, y: 3, width: 4.5, height: 10 } : { x: 2, y: 9, width: 12, height: 4 };
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" />
-      {side === "left" ? (
-        <line x1="6.5" y1="2.5" x2="6.5" y2="13.5" stroke="currentColor" />
-      ) : (
-        <line x1="1.5" y1="9.5" x2="14.5" y2="9.5" stroke="currentColor" />
-      )}
-      {shown && <rect {...panel} rx="1" fill="currentColor" opacity="0.45" />}
-    </svg>
-  );
-}
 
 interface SavedTabs {
   active: number;
