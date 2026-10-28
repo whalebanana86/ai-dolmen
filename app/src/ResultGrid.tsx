@@ -32,6 +32,8 @@ export interface GridEditing {
   editable: boolean[];
   /** Columns the query computes, which an added row has no value for until it's run again. */
   computed: boolean[];
+  /** Columns a new row gets a value for when it's left out. */
+  hasDefault: boolean[];
   /** Changes are refused for now, as on a read-only connection. */
   locked: boolean;
   onChange: (pending: PendingRows) => void;
@@ -104,14 +106,16 @@ export function ResultGrid({ columns, rows, columnNotes, editing, onCantEdit, pr
     return () => observer.disconnect();
   }, []);
 
-  // A new row starts being edited at its first cell that takes a value,
-  // before the next paint, so keys pressed right away reach the editor.
+  // A new row starts being edited at its first cell that takes a value and
+  // has no default, such as the name after an identity id, before the next
+  // paint, so keys pressed right away reach the editor.
   const addedCount = pending?.added.length ?? 0;
   const lastAdded = useRef(addedCount);
   useLayoutEffect(() => {
     if (addedCount > lastAdded.current && editing) {
       const row = rows.length + addedCount - 1;
-      const column = Math.max(0, editing.editable.indexOf(true));
+      const needed = editing.editable.findIndex((editable, c) => editable && !editing.hasDefault[c]);
+      const column = needed >= 0 ? needed : Math.max(0, editing.editable.indexOf(true));
       setSelected({ row, column });
       virtualizer.scrollToIndex(row);
       scrollColumnIntoView(column);

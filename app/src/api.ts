@@ -107,6 +107,8 @@ export interface SourceColumn {
   generated: boolean;
   /** Only the database gives it values (GENERATED ALWAYS AS IDENTITY). */
   identityAlways: boolean;
+  /** A new row gets a value when it's left out: a default, a sequence or an identity. */
+  hasDefault: boolean;
 }
 
 /** A column's value in PostgreSQL's text format; null is SQL NULL. */

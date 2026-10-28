@@ -100,6 +100,11 @@ const ROW_HEIGHT = 22;
 const RANK_GAP = 120;
 /** How far a bracket stands off the box's edge. */
 const BRACKET_WIDTH = 7;
+/**
+ * Room fitting the diagram leaves around it: the zoom buttons sit on the
+ * left, the legend and the minimap (200px wide) on the right.
+ */
+const FIT_PADDING = { top: "24px", bottom: "24px", left: "64px", right: "236px" } as const;
 
 function Erd({ introspection, schema: initialSchema, focus: initialFocus, onOpenDetail, onClose }: Props) {
   const t = useT();
@@ -123,7 +128,7 @@ function Erd({ introspection, schema: initialSchema, focus: initialFocus, onOpen
     setSelected(null);
     setMoved(new Set());
     // Wait for the new nodes to be measured before fitting them in.
-    requestAnimationFrame(() => fitView({ padding: 0.1, duration: 200 }));
+    requestAnimationFrame(() => fitView({ padding: FIT_PADDING, duration: 200 }));
   }, [diagram]);
 
   const related = useMemo(() => {
@@ -211,9 +216,10 @@ function Erd({ introspection, schema: initialSchema, focus: initialFocus, onOpen
               onlyRenderVisibleElements
               proOptions={{ hideAttribution: true }}
               fitView
+              fitViewOptions={{ padding: FIT_PADDING }}
             >
               <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
-              <Controls showInteractive={false} />
+              <Controls showInteractive={false} fitViewOptions={{ padding: FIT_PADDING }} />
               <MiniMap pannable zoomable nodeStrokeWidth={2} />
               {diagram.legend.length > 0 && (
                 <Panel position="top-right" className="erd-legend">

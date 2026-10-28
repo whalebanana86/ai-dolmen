@@ -52,6 +52,8 @@ pub struct TableColumn {
     pub generated: bool,
     /// An identity column only the database gives values (`GENERATED ALWAYS`).
     pub identity_always: bool,
+    /// A new row gets a value when it's left out: a default, a sequence or an identity.
+    pub has_default: bool,
 }
 
 /// Why a result's rows can't be changed.
@@ -529,7 +531,8 @@ async fn table_info(client: &Client, oid: u32) -> Result<Option<TableInfo>, Erro
     );
     let columns = client.query(
         "SELECT a.attnum, a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod),
-                NOT a.attnotnull, a.attgenerated <> '', a.attidentity = 'a'
+                NOT a.attnotnull, a.attgenerated <> '', a.attidentity = 'a',
+                a.atthasdef OR a.attidentity <> ''
          FROM pg_catalog.pg_attribute a
          WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped",
         &params,
@@ -554,6 +557,7 @@ async fn table_info(client: &Client, oid: u32) -> Result<Option<TableInfo>, Erro
                         nullable: row.get(3),
                         generated: row.get(4),
                         identity_always: row.get(5),
+                        has_default: row.get(6),
                     },
                 )
             })
