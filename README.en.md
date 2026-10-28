@@ -26,6 +26,11 @@ think DataGrip, DBeaver or TablePlus. Dolmen does that, and adds three things.
 - **Production stays safe.** Production databases open read-only, and statements
   that destroy data say how many rows they touch and ask first.
 
+![The icon bar on the left, the schema tree, the SQL editor and a query's results](docs/screenshots/overview.png)
+
+> Every picture in this README was made from invented sample data (a coffee shop,
+> made-up names). The app's language here is Korean, its default; English is in Settings.
+
 A *dolmen* — a "stone table" — is a monument that has stood for thousands of
 years. About 40% of the world's dolmens are on the Korean peninsula, where
 Dolmen is made. The name hopes your tables' history lasts as long.
@@ -131,6 +136,8 @@ change it in the grid.
 - Changed cells are yellow, new rows green and deleted ones red until you save.
   **Show SQL** shows the statements; **Save** (⌘S) runs them.
 
+![A changed grade, a deleted row and a new row in the result grid, with the SQL that saving runs](docs/screenshots/edit.png)
+
 Saving runs in **one transaction**, so everything is saved or nothing is. Rows
 are found by their primary key, and a row is changed only if the cells you
 changed still hold the values you read: if someone changed or deleted it in the
@@ -145,6 +152,8 @@ join, says why when you double-click it.
 Open **Snapshot** on the left and choose where it goes: a folder in a Git
 repository (such as `db/schema`), or a repository's address, which Dolmen
 clones and pushes to on every commit.
+
+![The snapshot panel showing a new column and index since the last snapshot, file by file](docs/screenshots/snapshot.png)
 
 Dolmen writes the database's structure as one file per object:
 
@@ -187,6 +196,8 @@ The same comparison runs from the command line and in CI; see
   and run in one transaction. Steps that can lose data need your consent, and
   the statements can go into the editor instead.
 
+![An ERD of the shop schema's tables and foreign keys](docs/screenshots/erd.png)
+
 ### Importing and exporting data
 
 - **Export**: right-click a table or view → **Export data…**, or **Export…** on
@@ -209,6 +220,8 @@ The same comparison runs from the command line and in CI; see
   or a dropped column, Dolmen names the database and about how many rows each
   statement touches, and asks.
 
+![Before a DELETE without WHERE on production, Dolmen says it deletes about 400 rows and asks](docs/screenshots/production.png)
+
 ### Query plans
 
 **Plan** (⌘E) shows how PostgreSQL runs the statement at the cursor, and ⌘⇧E
@@ -217,6 +230,8 @@ expected), the time it took and its share of the whole, with notes on the usual
 causes of a slow query: a sequential scan that throws most rows away, an
 estimate ten times off, a sort that spills to disk. Measuring runs on a separate
 connection and is rolled back; a statement that changes data asks first.
+
+![EXPLAIN ANALYZE: rows and time per step, and a note on a sequential scan that throws most rows away](docs/screenshots/plan.png)
 
 ### Settings
 
