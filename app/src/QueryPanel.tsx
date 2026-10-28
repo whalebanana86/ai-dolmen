@@ -32,7 +32,8 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { HistoryPanel } from "./HistoryPanel";
 import { defaultLayout, useLayout } from "./layout";
 import { Splitter } from "./Splitter";
-import { ResultView, StatementLine, resultCount } from "./ResultView";
+import { DiscardChanges, ResultView, SaveTarget, StatementLine, resultCount } from "./ResultView";
+import { NO_CHANGES, PendingRows, changeCount } from "./rowEdits";
 import { PlanView } from "./PlanView";
 import { RiskDialog, RiskyStatement } from "./RiskDialog";
 import { SchemaTree } from "./SchemaTree";
@@ -57,8 +58,8 @@ interface Location {
 interface Outcome {
   /** Distinguishes runs, so result grids start fresh instead of keeping old column widths. */
   runId: number;
-  /** Results of the statements that succeeded, in order. */
-  results: { result: StatementResult; statement: FixTarget }[];
+  /** Results of the statements that succeeded, in order, with changes to their rows not saved yet. */
+  results: { result: StatementResult; statement: FixTarget; pending?: PendingRows }[];
   /** The error that stopped the run, if any, and the statement that failed. */
   failure: { error: unknown; location: Location | null; statement: FixTarget } | null;
   statementCount: number;
@@ -123,6 +124,8 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   >(null);
   // Risky statements waiting for the user to say whether to run them.
   const [risky, setRisky] = useState<{ statements: RiskyStatement[]; decide: (run: boolean) => void } | null>(null);
+  // Unsaved changes to result rows, waiting for the user to say whether to drop them.
+  const [discarding, setDiscarding] = useState<{ count: number; decide: (drop: boolean) => void } | null>(null);
   // Editor tabs, each a console with its own session, kept per connection.
   const editorKey = session.savedId ?? session.label;
   const [tabs, setTabs] = useState<SqlTab[] | null>(null);
@@ -467,11 +470,41 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     setSnapshotDir(null);
   }
 
+  /** Asks before replacing results whose rows have unsaved changes; true to go on. */
+  function mayReplaceResults(tab: SqlTab) {
+    const count = (tab.outcome?.results ?? []).reduce(
+      (sum, { pending }) => sum + (pending ? changeCount(pending) : 0),
+      0,
+    );
+    if (count === 0) return Promise.resolve(true);
+    return new Promise<boolean>((decide) => setDiscarding({ count, decide }));
+  }
+
+  /** Applies a change to result `index` of a run, if the tab still shows that run. */
+  function changeResult(
+    tabId: number,
+    runId: number,
+    index: number,
+    change: { result?: StatementResult; pending?: PendingRows },
+  ) {
+    updateTab(tabId, (tab) =>
+      tab.outcome?.runId !== runId
+        ? {}
+        : {
+            outcome: {
+              ...tab.outcome,
+              results: tab.outcome.results.map((entry, i) => (i === index ? { ...entry, ...change } : entry)),
+            },
+          },
+    );
+  }
+
   async function run() {
     const view = viewRef.current;
     const tabId = activeIdRef.current;
     const tab = tabsRef.current?.find((t) => t.id === tabId);
     if (!view || !tab || tab.running) return;
+    if (!(await mayReplaceResults(tab))) return view.focus();
     const sql = view.state.doc.toString();
     const { from, to } = view.state.selection.main;
     const ranges = await statementsToRun(sql, from, to);
@@ -564,6 +597,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     const tabId = activeIdRef.current;
     const tab = tabsRef.current?.find((t) => t.id === tabId);
     if (!view || !tab || tab.running) return;
+    if (!(await mayReplaceResults(tab))) return view.focus();
     let statement = target;
     if (!statement) {
       const sql = view.state.doc.toString();
@@ -915,6 +949,18 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                 <RunResults
                   key={outcome.runId}
                   outcome={outcome}
+                  target={
+                    active?.sessionId != null
+                      ? {
+                          sessionId: active.sessionId,
+                          readOnly,
+                          label: session.label,
+                          address: session.address,
+                          environment: session.environment,
+                        }
+                      : null
+                  }
+                  onChange={(index, change) => changeResult(active!.id, outcome.runId, index, change)}
                   onReveal={revealStatement}
                   onExport={exportResult}
                   onFix={AI_ENABLED ? fixWithAi : undefined}
@@ -1052,6 +1098,19 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           onClose={() => setTransfer(null)}
         />
       )}
+      {discarding && (
+        <DiscardChanges
+          count={discarding.count}
+          onDiscard={() => {
+            discarding.decide(true);
+            setDiscarding(null);
+          }}
+          onCancel={() => {
+            discarding.decide(false);
+            setDiscarding(null);
+          }}
+        />
+      )}
       {risky && (
         <RiskDialog
           risky={risky.statements}
@@ -1181,11 +1240,16 @@ async function statementsToRun(sql: string, selectionStart: number, selectionEnd
  */
 function RunResults({
   outcome,
+  target,
+  onChange,
   onReveal,
   onExport,
   onFix,
 }: {
   outcome: Outcome;
+  /** Where changes to the rows are saved: the session the statements ran in. */
+  target: SaveTarget | null;
+  onChange: (index: number, change: { result?: StatementResult; pending?: PendingRows }) => void;
   onReveal: (statement: FixTarget) => void;
   onExport: (statement: string) => void;
   onFix?: (failure: NonNullable<Outcome["failure"]>) => void;
@@ -1202,8 +1266,9 @@ function RunResults({
       </p>
       {results.length + (failure ? 1 : 0) > 1 && (
         <div className="result-tabs" role="tablist" aria-label={t.results.tabs}>
-          {results.map(({ result, statement }, i) => {
+          {results.map(({ result, statement, pending }, i) => {
             const table = statementTable(statement.statement);
+            const unsaved = pending ? changeCount(pending) : 0;
             return (
               <button
                 key={i}
@@ -1221,6 +1286,12 @@ function RunResults({
                   </>
                 )}
                 <span className="muted"> · {resultCount(result, t)}</span>
+                {unsaved > 0 && (
+                  <span className="result-unsaved" title={t.rows.unsaved(unsaved)}>
+                    {" "}
+                    ●
+                  </span>
+                )}
               </button>
             );
           })}
@@ -1239,9 +1310,13 @@ function RunResults({
       )}
       {shown ? (
         <ResultView
+          key={selected}
           index={selected}
           result={shown.result}
           sql={shown.statement.statement}
+          pending={shown.pending ?? NO_CHANGES}
+          target={target}
+          onChange={(change) => onChange(selected, change)}
           onReveal={() => onReveal(shown.statement)}
           onExport={() => onExport(shown.statement.statement)}
         />

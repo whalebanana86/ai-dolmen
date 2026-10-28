@@ -1,0 +1,406 @@
+//! Changing a result's rows, against a real PostgreSQL server.
+//!
+//! Skipped unless `DOLMEN_TEST_PG_HOST` is set; see `tests/postgres.rs`.
+
+use dolmen_core::Error;
+use dolmen_core::Refusal;
+use dolmen_core::postgres::rows::{
+    CellEdit, ReadOnlyReason, RowChange, RowChanges, RowSource, SaveResult, Value,
+};
+use dolmen_core::postgres::{Session, StatementResult};
+
+#[macro_use]
+mod common;
+use common::{exclusive, test_config};
+
+/// A session with a fresh schema `schema` holding `setup`'s objects.
+async fn session_with(schema: &str, setup: &str) -> Session {
+    let config = test_config().expect("checked by config_or_skip");
+    let session = Session::connect(&config).await.expect("connect");
+    let _lock = exclusive().await;
+    session
+        .execute(
+            &format!(
+                "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}; \
+                 SET search_path TO {schema}; {setup}"
+            ),
+            0,
+        )
+        .await
+        .expect("setup");
+    session
+}
+
+async fn rows(session: &Session, sql: &str) -> Vec<Vec<Option<String>>> {
+    match session.execute(sql, 1000).await.expect("query").pop() {
+        Some(StatementResult::Rows { rows, .. }) => rows,
+        other => panic!("expected rows, got {other:?}"),
+    }
+}
+
+fn text(value: &str) -> Option<String> {
+    Some(value.to_owned())
+}
+
+fn value(column: &str, value: &str) -> Value {
+    Value {
+        column: column.into(),
+        value: text(value),
+    }
+}
+
+fn edit(column: &str, old: Option<&str>, new: Option<&str>) -> CellEdit {
+    CellEdit {
+        column: column.into(),
+        old: old.map(str::to_owned),
+        new: new.map(str::to_owned),
+    }
+}
+
+fn changes(schema: &str, table: &str, changes: Vec<RowChange>, returning: &[&str]) -> RowChanges {
+    RowChanges {
+        schema: schema.into(),
+        table: table.into(),
+        changes,
+        returning: returning.iter().map(|c| (*c).to_owned()).collect(),
+    }
+}
+
+fn reason(source: Option<RowSource>) -> ReadOnlyReason {
+    match source {
+        Some(RowSource::ReadOnly { reason }) => reason,
+        other => panic!("expected read-only rows, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn tells_which_table_a_result_comes_from() {
+    config_or_skip!();
+    let session = session_with(
+        "rows_source",
+        "CREATE TABLE people (id int PRIMARY KEY, name text NOT NULL, \
+           born date, age int GENERATED ALWAYS AS (2000 - extract(year FROM born)::int) STORED);
+         CREATE TABLE pets (id int PRIMARY KEY, owner int);
+         CREATE TABLE notes (body text);
+         CREATE VIEW adults AS SELECT * FROM people;",
+    )
+    .await;
+
+    let Some(RowSource::Table {
+        schema,
+        table,
+        columns,
+        key,
+    }) = session
+        .row_source("SELECT name AS who, upper(name), id, age, name FROM people;")
+        .await
+    else {
+        panic!("expected rows of a table");
+    };
+    assert_eq!((schema.as_str(), table.as_str()), ("rows_source", "people"));
+    assert_eq!(key, [2]);
+    let names: Vec<Option<&str>> = columns
+        .iter()
+        .map(|c| c.as_ref().map(|c| c.name.as_str()))
+        .collect();
+    // Computed values and a column shown again can't be changed.
+    assert_eq!(names, [Some("name"), None, Some("id"), Some("age"), None]);
+    let name = columns[0].as_ref().unwrap();
+    assert_eq!((name.data_type.as_str(), name.nullable), ("text", false));
+    assert!(columns[3].as_ref().unwrap().generated);
+
+    assert_eq!(
+        reason(session.row_source("SELECT 1, now()").await),
+        ReadOnlyReason::NoTable
+    );
+    assert_eq!(
+        reason(session.row_source("SELECT * FROM adults").await),
+        ReadOnlyReason::View
+    );
+    assert_eq!(
+        reason(
+            session
+                .row_source("SELECT p.name, a.id FROM people p JOIN pets a ON a.owner = p.id")
+                .await
+        ),
+        ReadOnlyReason::SeveralTables
+    );
+    assert_eq!(
+        reason(session.row_source("SELECT * FROM notes").await),
+        ReadOnlyReason::NoPrimaryKey
+    );
+    assert_eq!(
+        reason(session.row_source("SELECT name FROM people").await),
+        ReadOnlyReason::KeyNotSelected
+    );
+    assert_eq!(session.row_source("SELECT * FROM missing").await, None);
+}
+
+#[tokio::test]
+async fn saves_updates_inserts_and_deletes_together() {
+    config_or_skip!();
+    let session = session_with(
+        "rows_save",
+        "CREATE TABLE items (id serial PRIMARY KEY, name text, done boolean DEFAULT false, \
+           meta json, ip inet);
+         INSERT INTO items (name, done, meta, ip) VALUES
+           ('a', false, '{\"x\": 1}', '10.0.0.1'), ('b', true, null, null), ('c', false, null, null);",
+    )
+    .await;
+    let before = rows(
+        &session,
+        "SELECT id, name, done, meta, ip FROM items ORDER BY id",
+    )
+    .await;
+    assert_eq!(before[0][2], text("f"));
+
+    let result = session
+        .save_rows(&changes(
+            "rows_save",
+            "items",
+            vec![
+                RowChange::Delete {
+                    key: vec![value("id", "3")],
+                },
+                RowChange::Update {
+                    key: vec![value("id", "1")],
+                    // json has no equality operator; the values read are compared as text.
+                    cells: vec![
+                        edit("done", Some("f"), Some("t")),
+                        edit("meta", Some("{\"x\": 1}"), None),
+                        edit("ip", Some("10.0.0.1"), Some("10.0.0.2")),
+                    ],
+                },
+                RowChange::Insert {
+                    cells: vec![value("name", "d")],
+                },
+            ],
+            &["id", "name", "done", "meta", "ip"],
+        ))
+        .await
+        .expect("save");
+    let SaveResult::Saved {
+        committed,
+        rows: back,
+    } = result
+    else {
+        panic!("expected saved, got {result:?}");
+    };
+    assert!(committed);
+    // Values come back as the grid shows them, as a query returns them.
+    assert_eq!(
+        back,
+        [
+            None,
+            Some(vec![
+                text("1"),
+                text("a"),
+                text("t"),
+                None,
+                text("10.0.0.2")
+            ]),
+            Some(vec![text("4"), text("d"), text("f"), None, None]),
+        ]
+    );
+    assert_eq!(
+        rows(&session, "SELECT id, name, done FROM items ORDER BY id").await,
+        [
+            [text("1"), text("a"), text("t")],
+            [text("2"), text("b"), text("t")],
+            [text("4"), text("d"), text("f")],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn saves_nothing_when_a_row_changed_since_it_was_read() {
+    config_or_skip!();
+    let session = session_with(
+        "rows_stale",
+        "CREATE TABLE t (id int PRIMARY KEY, v text);
+         INSERT INTO t VALUES (1, 'one'), (2, 'two');",
+    )
+    .await;
+    let save = |old: &str| {
+        changes(
+            "rows_stale",
+            "t",
+            vec![
+                RowChange::Update {
+                    key: vec![value("id", "1")],
+                    cells: vec![edit("v", Some("one"), Some("uno"))],
+                },
+                RowChange::Update {
+                    key: vec![value("id", "2")],
+                    cells: vec![edit("v", Some(old), Some("dos"))],
+                },
+            ],
+            &[],
+        )
+    };
+    // Someone else changed row 2 since it was read.
+    let result = session.save_rows(&save("deux")).await.expect("save");
+    assert!(
+        matches!(result, SaveResult::Stale { change: 1 }),
+        "{result:?}"
+    );
+    // The first change was undone with it.
+    assert_eq!(
+        rows(&session, "SELECT v FROM t ORDER BY id").await,
+        [[text("one")], [text("two")]]
+    );
+
+    // A row that's gone is stale too.
+    let gone = changes(
+        "rows_stale",
+        "t",
+        vec![RowChange::Delete {
+            key: vec![value("id", "9")],
+        }],
+        &[],
+    );
+    let result = session.save_rows(&gone).await.expect("save");
+    assert!(
+        matches!(result, SaveResult::Stale { change: 0 }),
+        "{result:?}"
+    );
+    assert!(matches!(
+        session.save_rows(&save("two")).await.expect("save"),
+        SaveResult::Saved { .. }
+    ));
+}
+
+#[tokio::test]
+async fn reports_the_change_the_server_rejected() {
+    config_or_skip!();
+    let session = session_with(
+        "rows_failed",
+        "CREATE TABLE t (id int PRIMARY KEY, code varchar(2));
+         INSERT INTO t VALUES (1, 'ab');",
+    )
+    .await;
+    let result = session
+        .save_rows(&changes(
+            "rows_failed",
+            "t",
+            vec![
+                RowChange::Insert {
+                    cells: vec![value("id", "2"), value("code", "cd")],
+                },
+                // Too long: the column's length holds, as for a literal.
+                RowChange::Update {
+                    key: vec![value("id", "1")],
+                    cells: vec![edit("code", Some("ab"), Some("abc"))],
+                },
+            ],
+            &[],
+        ))
+        .await
+        .expect("save");
+    match result {
+        SaveResult::Failed {
+            change: 1,
+            error: Error::Database { code, position, .. },
+        } => {
+            assert_eq!(code, "22001");
+            assert_eq!(position, None);
+        }
+        other => panic!("expected the update to fail, got {other:?}"),
+    }
+    assert_eq!(
+        rows(&session, "SELECT id FROM t ORDER BY id").await,
+        [[text("1")]]
+    );
+}
+
+#[tokio::test]
+async fn joins_a_transaction_the_session_has_open() {
+    config_or_skip!();
+    let session = session_with(
+        "rows_nested",
+        "CREATE TABLE t (id int PRIMARY KEY, v int);
+         INSERT INTO t VALUES (1, 10);",
+    )
+    .await;
+    let set = |old: &str, new: &str| {
+        changes(
+            "rows_nested",
+            "t",
+            vec![RowChange::Update {
+                key: vec![value("id", "1")],
+                cells: vec![edit("v", Some(old), Some(new))],
+            }],
+            &["v"],
+        )
+    };
+    session.execute("BEGIN", 0).await.unwrap();
+    let result = session.save_rows(&set("10", "11")).await.expect("save");
+    assert!(
+        matches!(
+            result,
+            SaveResult::Saved {
+                committed: false,
+                ..
+            }
+        ),
+        "{result:?}"
+    );
+    // A failed change leaves the user's transaction usable.
+    let result = session.save_rows(&set("10", "12")).await.expect("save");
+    assert!(matches!(result, SaveResult::Stale { .. }), "{result:?}");
+    session.execute("ROLLBACK", 0).await.unwrap();
+    assert_eq!(rows(&session, "SELECT v FROM t").await, [[text("10")]]);
+
+    // Inside a failed transaction nothing can run until it ends.
+    session.execute("BEGIN", 0).await.unwrap();
+    assert!(session.execute("SELECT 1/0", 0).await.is_err());
+    let err = session.save_rows(&set("10", "13")).await.unwrap_err();
+    assert!(
+        matches!(&err, Error::Database { code, .. } if code == "25P02"),
+        "{err:?}"
+    );
+    session.execute("ROLLBACK", 0).await.unwrap();
+}
+
+#[tokio::test]
+async fn refuses_changes_that_no_longer_fit_the_table() {
+    config_or_skip!();
+    let session = session_with(
+        "rows_changed",
+        "CREATE TABLE t (a int, b int, v text, PRIMARY KEY (a, b));
+         INSERT INTO t VALUES (1, 1, 'x');",
+    )
+    .await;
+    let refused = |result: Result<SaveResult, Error>| {
+        matches!(
+            result,
+            Err(Error::Refused {
+                reason: Refusal::TableChanged,
+                ..
+            })
+        )
+    };
+    // Half a key could match several rows.
+    let half = changes(
+        "rows_changed",
+        "t",
+        vec![RowChange::Delete {
+            key: vec![value("a", "1"), value("a", "1")],
+        }],
+        &[],
+    );
+    assert!(refused(session.save_rows(&half).await));
+    let gone = changes(
+        "rows_changed",
+        "t",
+        vec![RowChange::Update {
+            key: vec![value("a", "1"), value("b", "1")],
+            cells: vec![edit("w", Some("x"), Some("y"))],
+        }],
+        &[],
+    );
+    assert!(refused(session.save_rows(&gone).await));
+    let missing = changes("rows_changed", "nope", vec![], &[]);
+    assert!(refused(session.save_rows(&missing).await));
+    assert_eq!(rows(&session, "SELECT v FROM t").await, [[text("x")]]);
+}

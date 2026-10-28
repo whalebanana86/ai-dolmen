@@ -32,6 +32,8 @@ export const en = {
       readOnly: "The connection is read-only. Allow writing with the lock in the toolbar first.",
       noColumns: "There are no columns to export or import.",
       developmentBuild: "A development build can't install updates. Update a Dolmen installed from a release.",
+      tableChanged: "The table changed since its rows were read. Run the query again.",
+      rowChanged: "A row changed or was deleted since it was read, so nothing was saved.",
     },
     ai: {
       noApiKey: "There's no Anthropic API key yet. Add one in Settings (⚙) to use AI.",
@@ -170,6 +172,56 @@ export const en = {
     rows: (n: number) => plural(n, "row", "rows"),
     firstRows: (shown: number, total: number) =>
       `showing first ${shown.toLocaleString()} of ${total.toLocaleString()} rows`,
+  },
+
+  grid: {
+    copy: "Copy value",
+    edit: "Edit value",
+    setNull: "Set to NULL",
+    revert: "Undo change",
+    setDefault: "Back to default",
+    deleteRow: "Delete row",
+    undelete: "Keep row",
+    removeAdded: "Remove added row",
+    addRow: "Add row",
+  },
+
+  rows: {
+    addRow: "Add row",
+    addRowTitle: "Adds a row to the table. Double-click a cell or press Enter to change a value",
+    unsaved: (n: number) => `${plural(n, "row", "rows")} changed, not saved`,
+    showSql: "Show SQL",
+    hideSql: "Hide SQL",
+    discard: "Discard",
+    save: "Save",
+    saving: "Saving…",
+    saveTitle: "Saves every change in one transaction (⌘S)",
+    saved: (n: number) => `Saved ${plural(n, "change", "changes")}.`,
+    savedInTransaction: (n: number) =>
+      `Made ${plural(n, "change", "changes")} inside the open transaction: they're saved when it commits.`,
+    stale: (row: number) =>
+      `Row ${row} changed or was deleted since it was read, so nothing was saved. Run the query again to see it as it is now.`,
+    failed: (row: number) => `Row ${row} couldn't be saved, so nothing was saved.`,
+    notNull: "NOT NULL",
+    cantEdit: "This result can't be edited.",
+    readOnly: {
+      noTable: "This result can't be edited: none of its columns comes from a table.",
+      view: "This result can't be edited: it comes from a view. Query the table to edit its rows.",
+      severalTables: "This result can't be edited: it joins several tables. Query one table to edit its rows.",
+      noPrimaryKey: "This result can't be edited: its table has no primary key, so its rows can't be told apart.",
+      keyNotSelected:
+        "This result can't be edited: it doesn't include the table's primary key. Add the key columns to the SELECT.",
+    },
+    locked: "The connection is read-only. Allow writing with the lock in the toolbar to edit rows.",
+    computed: "The query computes this column, so it can't be edited.",
+    generated: (column: string) => `${column} is a generated column: its value comes from other columns.`,
+    identity: (column: string) => `Only the database gives ${column} values (GENERATED ALWAYS AS IDENTITY).`,
+    confirmTitle: "Save changes to a production database?",
+    saveOnProduction: "Save to production",
+    discardTitle: "Discard unsaved changes?",
+    discardBody: (n: number) =>
+      `${plural(n, "row has", "rows have")} changes that aren't saved. The results are replaced, and the changes go with them.`,
+    discardContinue: "Discard and continue",
   },
 
   tree: {
@@ -370,7 +422,7 @@ export const en = {
     star: "Star: kept until you remove it",
     unstar: "Remove the star",
     remove: "Delete",
-    sources: { editor: "", detail: "Detail panel", snapshot: "Snapshot", import: "Import" },
+    sources: { editor: "", detail: "Detail panel", snapshot: "Snapshot", import: "Import", grid: "Result edit" },
     rows: (n: number) => plural(n, "row", "rows"),
     cancelled: "Cancelled",
     today: "Today",

@@ -4,7 +4,7 @@ use serde::Serialize;
 ///
 /// Serialized with a `kind` tag so the app can show server errors (with their
 /// SQLSTATE code and position) differently from connection problems.
-#[derive(Debug, thiserror::Error, Serialize)]
+#[derive(Debug, Clone, thiserror::Error, Serialize)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -86,6 +86,10 @@ pub enum Refusal {
     NoColumns,
     /// A development build can't install an update over itself.
     DevelopmentBuild,
+    /// A table's columns or primary key changed since its rows were read.
+    TableChanged,
+    /// A row changed or was deleted since it was read, so changes to it weren't saved.
+    RowChanged,
 }
 
 impl From<keyring_core::Error> for Error {

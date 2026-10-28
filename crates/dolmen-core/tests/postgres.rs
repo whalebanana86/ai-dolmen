@@ -29,6 +29,7 @@ fn rows(result: &StatementResult) -> (&[String], &[Vec<Option<String>>], u64) {
             columns,
             rows,
             total_rows,
+            ..
         } => (columns, rows, *total_rows),
         other => panic!("expected rows, got {other:?}"),
     }

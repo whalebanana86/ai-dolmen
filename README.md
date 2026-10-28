@@ -106,6 +106,19 @@ readable only by you, keeps 90 days and up to 10,000 queries per connection
 and never keeps result rows. Turn it off per connection for databases whose SQL
 shouldn't be kept. The editor's text is kept per connection as well.
 
+## Editing data
+
+When a result's rows come from one table and include its primary key, they can
+be changed in the grid: double-click a cell or press Enter to edit it
+(Shift+Enter for a new line, Tab for the next column), **Add row** for a new
+one, and ⌘⌫ or the right-click menu to delete a row or set a cell to NULL.
+Changes wait, marked in the grid, until you press **Save** (⌘S); **Show SQL**
+shows the statements first. They're saved in one transaction, by primary key,
+and only if the cells you changed still hold the values you read: if someone
+changed or deleted a row since, nothing is saved. In a transaction you opened
+with `BEGIN`, they join it and are saved when it commits. A read-only
+connection can't be edited, and production asks before saving.
+
 ## Data import and export
 
 Right-click a table or view and choose **Export data…**, or press **Export…**

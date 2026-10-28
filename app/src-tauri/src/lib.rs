@@ -62,6 +62,8 @@ pub fn run() {
             pg::pg_current_schema,
             pg::object_plan,
             pg::object_apply,
+            pg::rows_preview,
+            pg::rows_save,
             snapshot::snapshot_checkout,
             snapshot::snapshot_ssh_alternatives,
             snapshot::snapshot_create_branch,

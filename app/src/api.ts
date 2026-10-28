@@ -78,8 +78,66 @@ export type StatementResult =
       rows: (string | null)[][];
       /** Rows the statement returned, which can exceed rows.length. */
       totalRows: number;
+      /** Where the rows come from, to change them; null when that can't be told. */
+      source: RowSource | null;
     }
   | { kind: "command"; rowsAffected: number };
+
+/** Where a result's rows come from, and whether they can be changed. */
+export type RowSource =
+  | {
+      kind: "table";
+      schema: string;
+      table: string;
+      /** For each result column, the table column it shows; null for a computed value or a repeat. */
+      columns: (SourceColumn | null)[];
+      /** The result columns that hold the primary key, in key order. */
+      key: number[];
+    }
+  | { kind: "readOnly"; reason: ReadOnlyReason };
+
+export type ReadOnlyReason = "noTable" | "view" | "severalTables" | "noPrimaryKey" | "keyNotSelected";
+
+/** A table column a result shows. */
+export interface SourceColumn {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  /** Computed from other columns, so it takes no value. */
+  generated: boolean;
+  /** Only the database gives it values (GENERATED ALWAYS AS IDENTITY). */
+  identityAlways: boolean;
+}
+
+/** A column's value in PostgreSQL's text format; null is SQL NULL. */
+export interface CellValue {
+  column: string;
+  value: string | null;
+}
+
+export type RowChange =
+  /** Gives cells of the row with `key` new values, if they still hold the old ones. */
+  | { kind: "update"; key: CellValue[]; cells: { column: string; old: string | null; new: string | null }[] }
+  /** Adds a row; columns left out get their defaults. */
+  | { kind: "insert"; cells: CellValue[] }
+  | { kind: "delete"; key: CellValue[] };
+
+export interface RowChanges {
+  schema: string;
+  table: string;
+  /** Made in this order. */
+  changes: RowChange[];
+  /** The table columns whose values come back for each updated or added row. */
+  returning: string[];
+}
+
+export type SaveResult =
+  /** `rows` has, for each change, the row's `returning` values now, or null for a delete. */
+  | { kind: "saved"; committed: boolean; rows: ((string | null)[] | null)[] }
+  /** Change `change` found its row changed or gone since it was read; nothing was saved. */
+  | { kind: "stale"; change: number }
+  /** Change `change` failed; nothing was saved. */
+  | { kind: "failed"; change: number; error: AppError };
 
 // The database structure, mirroring dolmen_core::schema. Lists are sorted by name.
 
@@ -248,7 +306,9 @@ export type Refusal =
   | "uncommittedChanges"
   | "readOnly"
   | "noColumns"
-  | "developmentBuild";
+  | "developmentBuild"
+  | "tableChanged"
+  | "rowChanged";
 
 /** Why asking the AI failed. */
 export type AiFailure =
@@ -341,6 +401,10 @@ export const pg = {
   /** What each statement could destroy, with about how many rows; null for a harmless one. */
   assess: (sessionId: number, statements: string[]) =>
     invoke<(Assessment | null)[]>("pg_assess", { sessionId, statements }),
+  /** Saves changes to a result's rows, all or none; in an open transaction they join it. */
+  saveRows: (sessionId: number, changes: RowChanges) => invoke<SaveResult>("rows_save", { sessionId, changes }),
+  /** The statements saving `changes` makes, with their values written in. */
+  previewRows: (changes: RowChanges) => invoke<string[]>("rows_preview", { changes }),
 };
 
 /** A connection the user saved. Its password, if any, stays in the OS keychain. */
@@ -535,7 +599,7 @@ export interface HistoryRun {
   /** Rows returned or affected. */
   rows: number | null;
   error: string | null;
-  source: "editor" | "detail" | "snapshot" | "import";
+  source: "editor" | "detail" | "snapshot" | "import" | "grid";
   starred: boolean;
 }
 

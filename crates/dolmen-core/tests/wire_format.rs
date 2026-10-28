@@ -42,10 +42,11 @@ fn statement_results_are_tagged_by_kind() {
         columns: vec!["id".into()],
         rows: vec![vec![Some("1".into())], vec![None]],
         total_rows: 2,
+        source: None,
     };
     assert_eq!(
         serde_json::to_value(rows).unwrap(),
-        json!({ "kind": "rows", "columns": ["id"], "rows": [["1"], [null]], "totalRows": 2 })
+        json!({ "kind": "rows", "columns": ["id"], "rows": [["1"], [null]], "totalRows": 2, "source": null })
     );
     assert_eq!(
         serde_json::to_value(StatementResult::Command { rows_affected: 3 }).unwrap(),

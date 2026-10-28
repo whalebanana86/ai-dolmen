@@ -19,6 +19,7 @@ pub mod ddl;
 pub mod edit;
 mod introspect;
 pub mod migrate;
+pub mod rows;
 pub mod transfer;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -195,6 +196,9 @@ pub enum StatementResult {
         rows: Vec<Vec<Option<String>>>,
         /// Number of rows the statement returned, which can exceed `rows.len()`.
         total_rows: u64,
+        /// Where the rows come from, to change them; see [`Session::row_source`].
+        /// `None` until asked, or when it can't be told.
+        source: Option<rows::RowSource>,
     },
     /// A statement that returned no rows, such as `UPDATE` or `CREATE TABLE`.
     Command { rows_affected: u64 },
@@ -213,6 +217,9 @@ pub struct Session {
     metadata: tokio::sync::Mutex<Option<Client>>,
     /// The default schema as last read, for when the session can't answer.
     default_schema: std::sync::Mutex<Option<String>>,
+    /// Held while statements run or rows are saved, so another statement
+    /// never lands inside the transaction saving opens.
+    work: tokio::sync::Mutex<()>,
 }
 
 impl Session {
@@ -239,6 +246,7 @@ impl Session {
             config: config.clone(),
             metadata: tokio::sync::Mutex::new(None),
             default_schema: std::sync::Mutex::new(default_schema),
+            work: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -257,6 +265,7 @@ impl Session {
     /// implicit transaction unless they contain their own `BEGIN`/`COMMIT`.
     /// At most `max_rows` rows are kept per result; the rest are only counted.
     pub async fn execute(&self, sql: &str, max_rows: usize) -> Result<Vec<StatementResult>, Error> {
+        let _working = self.work.lock().await;
         let mut stream = pin!(self.client.simple_query_raw(sql).await?);
         let mut results = Vec::new();
         let mut current: Option<RowsBuilder> = None;
@@ -290,6 +299,7 @@ impl Session {
                             columns: builder.columns,
                             rows: builder.rows,
                             total_rows: builder.total_rows,
+                            source: None,
                         },
                         None => StatementResult::Command { rows_affected },
                     });

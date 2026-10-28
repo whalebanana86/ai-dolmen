@@ -489,6 +489,11 @@ button.danger {
   min-height: 0;
 }
 
+/* Only the grid gives up height when the panel is short. */
+.result > :not(.grid) {
+  flex: none;
+}
+
 .result-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -627,10 +632,56 @@ button.danger {
   font-style: italic;
 }
 
+/* Changes not saved yet: edited cells, added rows and deleted ones. */
+.grid-cell.edited {
+  background: var(--warning-bg);
+}
+
+.grid-row.added .grid-cell {
+  background: var(--diff-add-bg);
+}
+
+.grid-row.deleted .grid-cell {
+  background: var(--danger-bg);
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+/* A row that couldn't be saved. */
+.grid-row.problem .grid-cell.row-number {
+  box-shadow: inset 3px 0 var(--danger);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* An added row's cell that gets its column's default. */
+.grid-cell.default {
+  color: var(--null);
+  font-style: italic;
+}
+
 .grid-cell.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
   background: var(--selection-match);
+}
+
+/* Sits over the cell it edits, growing for values on several lines. */
+.grid-editor {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 1px 6px;
+  border: 2px solid var(--accent);
+  border-radius: 0;
+  outline: none;
+  background: var(--surface);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  color: var(--text);
+  font: inherit;
+  line-height: 17px;
+  resize: none;
 }
 
 .resize-handle {
@@ -2600,4 +2651,60 @@ button.link:hover {
   padding: 0 6px;
   font-size: 12px;
   line-height: 18px;
+}
+
+.result-unsaved {
+  color: var(--warning);
+}
+
+/* Unsaved changes to a result's rows, with saving and discarding. */
+.rows-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.rows-bar button {
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.rows-notice {
+  margin: 0 0 6px;
+  color: var(--muted);
+}
+
+.rows-notice.warning {
+  color: var(--warning);
+}
+
+.rows-error {
+  margin: 0 0 6px;
+}
+
+/* The statements saving makes. */
+.rows-sql {
+  max-height: 160px;
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dialog .rows-sql {
+  max-height: 280px;
 }

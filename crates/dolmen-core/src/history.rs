@@ -60,6 +60,8 @@ pub enum Source {
     Snapshot,
     /// A file's rows imported into a table.
     Import,
+    /// Rows changed in a result grid.
+    Grid,
 }
 
 /// A run to record; the store adds the id and masks secrets.

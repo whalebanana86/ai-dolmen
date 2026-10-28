@@ -8,6 +8,7 @@ use dolmen_core::connections::{ConnectionStore, Environment};
 use dolmen_core::history::Source;
 use dolmen_core::postgres::edit::{self, Edit};
 use dolmen_core::postgres::migrate::Plan;
+use dolmen_core::postgres::rows::{self, RowChanges, SaveResult};
 use dolmen_core::postgres::{ConnectConfig, RowEstimate, Session, StatementResult};
 use dolmen_core::schema::{Database, ForeignKey};
 use dolmen_core::sql::{self, Risk};
@@ -353,7 +354,7 @@ pub async fn pg_execute(
 ) -> Result<Vec<StatementResult>, Error> {
     let session = sessions.get(session_id)?;
     let started = Started::now();
-    let result = session.execute(&sql, MAX_ROWS).await;
+    let mut result = session.execute(&sql, MAX_ROWS).await;
     if let Some(connection) = sessions.connection(session_id) {
         history.record(
             &connection,
@@ -362,6 +363,53 @@ pub async fn pg_execute(
             &result,
             |results| history::rows(results),
             Source::Editor,
+        );
+    }
+    // A statement's rows can be changed in the grid when they come from one table.
+    if let Ok([StatementResult::Rows { source, .. }]) = result.as_deref_mut() {
+        *source = session.row_source(&sql).await;
+    }
+    result
+}
+
+/// The statements that saving `changes` makes, with their values written in,
+/// for the user to review.
+#[tauri::command]
+pub fn rows_preview(changes: RowChanges) -> Vec<String> {
+    rows::shown(&changes)
+}
+
+/// Saves the changes made to a result's rows in the grid, all of them or
+/// none. In a transaction the session has open they join it.
+#[tauri::command]
+pub async fn rows_save(
+    session_id: u64,
+    changes: RowChanges,
+    sessions: State<'_, Sessions>,
+    history: State<'_, HistoryStore>,
+) -> Result<SaveResult, Error> {
+    sessions.check_writable(session_id)?;
+    let session = sessions.get(session_id)?;
+    let started = Started::now();
+    let result = session.save_rows(&changes).await;
+    if let Some(connection) = sessions.connection(session_id) {
+        let outcome = match &result {
+            Ok(SaveResult::Saved { rows, .. }) => Ok(rows.len() as i64),
+            Ok(SaveResult::Stale { .. }) => Err(Error::Refused {
+                reason: Refusal::RowChanged,
+                message: "A row changed or was deleted since it was read, so nothing was saved."
+                    .into(),
+            }),
+            Ok(SaveResult::Failed { error, .. }) => Err(error.clone()),
+            Err(err) => Err(err.clone()),
+        };
+        history.record(
+            &connection,
+            &rows::shown(&changes).join("\n"),
+            started,
+            &outcome,
+            |rows| Some(*rows),
+            Source::Grid,
         );
     }
     result
