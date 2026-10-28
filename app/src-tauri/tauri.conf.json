@@ -41,7 +41,7 @@
     "createUpdaterArtifacts": true,
     "publisher": "Dolmen contributors",
     "copyright": "Copyright 2026 Dolmen contributors",
-    "license": "Apache-2.0",
+    "license": "MIT",
     "licenseFile": "../../LICENSE",
     "homepage": "https://github.com/whalebanana86/ai-dolmen",
     "category": "DeveloperTool",
