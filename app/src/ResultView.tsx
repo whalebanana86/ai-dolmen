@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Environment, StatementResult, errorMessage, isAppError, pg } from "./api";
 import { EnvironmentBadge } from "./ConnectionForm";
 import type { Messages } from "./i18n/en";
@@ -19,8 +19,12 @@ export interface SaveTarget {
 }
 
 interface Props {
-  index: number;
   result: StatementResult;
+  /**
+   * How long the run took, when this is its only result: then the header
+   * says what the result is. With several, their tabs say it instead.
+   */
+  elapsedMs: number | null;
   /** The statement that gave the result. */
   sql: string;
   /** Changes to its rows not saved yet. */
@@ -41,20 +45,26 @@ type Status =
   | { kind: "stale"; row: number }
   | { kind: "failed"; row: number | null; error: unknown };
 
-export function ResultView({ index, result, sql, pending, target, onChange, onReveal, onExport }: Props) {
+export function ResultView({ result, elapsedMs, sql, pending, target, onChange, onReveal, onExport }: Props) {
   const t = useT();
-  const table = statementTable(sql);
-  const count = resultCount(result, t);
+  const summary =
+    elapsedMs === null ? null : <ResultSummary table={statementTable(sql)} result={result} elapsedMs={elapsedMs} />;
   const [notice, setNotice] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [preview, setPreview] = useState<string[] | null>(null);
   const [confirming, setConfirming] = useState<string[] | null>(null);
 
+  // Saying it saved needs only a moment; a transaction still to commit stays said.
+  useEffect(() => {
+    if (status?.kind !== "saved" || !status.committed) return;
+    const timer = window.setTimeout(() => setStatus(null), SAVED_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+
   if (result.kind !== "rows") {
     return (
       <div className="result">
-        <ResultTitle index={index} table={table} count={count} />
-        <StatementLine sql={sql} onReveal={onReveal} />
+        <ResultHead summary={summary} sql={sql} onReveal={onReveal} />
       </div>
     );
   }
@@ -128,23 +138,22 @@ export function ResultView({ index, result, sql, pending, target, onChange, onRe
 
   return (
     <div className="result">
-      <ResultTitle index={index} table={table} count={count}>
-        {result.columns.length > 0 && (
-          <button className="result-export" onClick={onExport} title={t.results.exportTitle}>
-            {t.results.export}
-          </button>
-        )}
+      <ResultHead summary={summary} sql={sql} onReveal={onReveal}>
         {source && (
           <button
-            className="result-export"
+            className="result-action"
             onClick={() => (locked ? explain(null) : changePending(addRow(pending, result.columns.length)))}
             title={t.rows.addRowTitle}
           >
             {t.rows.addRow}
           </button>
         )}
-      </ResultTitle>
-      <StatementLine sql={sql} onReveal={onReveal} />
+        {result.columns.length > 0 && (
+          <button className="result-action" onClick={onExport} title={t.results.exportTitle}>
+            {t.results.export}
+          </button>
+        )}
+      </ResultHead>
       {notice && <p className="rows-notice">{notice}</p>}
       {changes > 0 && (
         <div className="rows-bar">
@@ -194,31 +203,50 @@ export function ResultView({ index, result, sql, pending, target, onChange, onRe
   );
 }
 
-function ResultTitle({
-  index,
-  table,
-  count,
+const SAVED_NOTICE_MS = 4000;
+
+/** One line above the grid: what the result is, its statement, and buttons at the end. */
+function ResultHead({
+  summary,
+  sql,
+  onReveal,
   children,
 }: {
-  index: number;
-  table: string | null;
-  count: string;
+  summary: ReactNode;
+  sql: string;
+  onReveal: () => void;
   children?: ReactNode;
+}) {
+  return (
+    <div className="result-head">
+      {summary}
+      <StatementLine sql={sql} onReveal={onReveal} />
+      {children}
+    </div>
+  );
+}
+
+/** "shop.orders · 3 rows · 27 ms" */
+function ResultSummary({
+  table,
+  result,
+  elapsedMs,
+}: {
+  table: string | null;
+  result: StatementResult;
+  elapsedMs: number;
 }) {
   const t = useT();
   return (
-    <p className="result-title">
-      {t.results.statement(index + 1)}
+    <span className="result-summary">
       {table && (
         <>
-          {" · "}
           <strong className="result-table">{table}</strong>
+          {" · "}
         </>
       )}
-      {" · "}
-      {count}
-      {children}
-    </p>
+      {resultCount(result, t)} · {Math.round(elapsedMs)} ms
+    </span>
   );
 }
 

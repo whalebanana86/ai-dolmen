@@ -272,7 +272,10 @@ export function ResultGrid({ columns, rows, columnNotes, editing, onCantEdit, pr
     if (!deleted) {
       items.push({ label: t.grid.edit, onSelect: () => startEdit(cell) });
       if (editing.editable[cell.column] && !editing.locked) {
-        items.push({ label: t.grid.setNull, onSelect: () => change((p) => setCell(rows, p, cell.row, cell.column, null)) });
+        items.push({
+          label: t.grid.setNull,
+          onSelect: () => change((p) => setCell(rows, p, cell.row, cell.column, null)),
+        });
       }
       if (pending && isChanged(rows, pending, cell.row, cell.column)) {
         const original = added ? undefined : rows[cell.row][cell.column];

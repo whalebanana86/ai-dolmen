@@ -47,7 +47,9 @@ export function setCell(
 ): PendingRows {
   if (row >= rows.length) {
     const index = row - rows.length;
-    const added = pending.added.map((cells, i) => (i === index ? cells.map((c, j) => (j === column ? value : c)) : cells));
+    const added = pending.added.map((cells, i) =>
+      i === index ? cells.map((c, j) => (j === column ? value : c)) : cells,
+    );
     return { ...pending, added };
   }
   const cells = { ...pending.edits[row] };
@@ -92,14 +94,20 @@ export function toChanges(source: TableSource, rows: Row[], pending: PendingRows
     changes.push({
       kind: "update",
       key: key(row),
-      cells: Object.entries(cells).map(([c, value]) => ({ column: name(Number(c)), old: rows[row][Number(c)], new: value })),
+      cells: Object.entries(cells).map(([c, value]) => ({
+        column: name(Number(c)),
+        old: rows[row][Number(c)],
+        new: value,
+      })),
     });
     rowOf.push(row);
   }
   pending.added.forEach((cells, i) => {
     changes.push({
       kind: "insert",
-      cells: cells.flatMap((value, c) => (value === undefined || !source.columns[c] ? [] : [{ column: name(c), value }])),
+      cells: cells.flatMap((value, c) =>
+        value === undefined || !source.columns[c] ? [] : [{ column: name(c), value }],
+      ),
     });
     rowOf.push(rows.length + i);
   });

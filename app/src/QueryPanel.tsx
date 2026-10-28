@@ -1258,12 +1258,21 @@ function RunResults({
   const { results, failure } = outcome;
   const [selected, setSelected] = useState(failure ? results.length : Math.max(0, results.length - 1));
   const shown = results[selected];
+  // A single result's header says what it is; several get a summary and tabs.
+  const single = results.length + (failure ? 1 : 0) === 1;
 
   return (
     <>
-      <p className="muted status">
-        {t.workspace.runStatus(outcome.firstLine, results.length, outcome.statementCount, Math.round(outcome.elapsedMs))}
-      </p>
+      {!single && (
+        <p className="muted status">
+          {t.workspace.runStatus(
+            outcome.firstLine,
+            results.length,
+            outcome.statementCount,
+            Math.round(outcome.elapsedMs),
+          )}
+        </p>
+      )}
       {results.length + (failure ? 1 : 0) > 1 && (
         <div className="result-tabs" role="tablist" aria-label={t.results.tabs}>
           {results.map(({ result, statement, pending }, i) => {
@@ -1311,8 +1320,8 @@ function RunResults({
       {shown ? (
         <ResultView
           key={selected}
-          index={selected}
           result={shown.result}
+          elapsedMs={single ? outcome.elapsedMs : null}
           sql={shown.statement.statement}
           pending={shown.pending ?? NO_CHANGES}
           target={target}
