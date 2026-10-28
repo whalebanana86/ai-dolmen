@@ -133,10 +133,9 @@ export const ko: Messages = {
     runTitle: "커서가 있는 문장이나 선택한 부분을 실행합니다 (⌘/Ctrl + Enter)",
     disconnect: "연결 끊기",
     snapshot: "스냅샷",
-    snapshotTitle: "데이터베이스를 스키마 스냅샷과 비교합니다",
     snapshotChanges: (n) => (n === 0 ? "데이터베이스와 같음" : `변경 ${count(n, "건")}`),
     erd: "ERD",
-    erdTitle: "테이블과 관계를 다이어그램으로 봅니다",
+    erdTip: "ERD: 테이블과 관계",
     running: "실행 중…",
     runStatus: (line, done, total, ms) => `${line}번 줄부터 · 문장 ${total}개 중 ${done}개 · ${ms} ms`,
     errorLocation: (line, column) => `${line}번 줄 ${column}번째 글자`,
@@ -185,7 +184,7 @@ export const ko: Messages = {
   rows: {
     addRow: "행 추가",
     addRowTitle: "테이블에 행을 추가합니다. 셀을 더블클릭하거나 Enter를 누르면 값을 바꿀 수 있습니다",
-    unsaved: (n) => `저장하지 않은 변경 ${count(n, "행")}`,
+    unsaved: (n) => `저장 안 한 변경 ${count(n, "행")}`,
     showSql: "SQL 보기",
     hideSql: "SQL 숨기기",
     discard: "되돌리기",
@@ -400,7 +399,6 @@ export const ko: Messages = {
   history: {
     title: "쿼리 히스토리",
     button: "히스토리",
-    buttonTitle: "이전에 실행한 문장을 찾아봅니다 (⌘⇧H)",
     search: "SQL 검색",
     thisConnection: "이 연결",
     allConnections: "모든 연결",

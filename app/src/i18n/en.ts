@@ -137,10 +137,9 @@ export const en = {
     runTitle: "Runs the statement at the cursor, or the selection (⌘/Ctrl + Enter)",
     disconnect: "Disconnect",
     snapshot: "Snapshot",
-    snapshotTitle: "Compare the database with its schema snapshot",
     snapshotChanges: (n: number) => (n === 0 ? "matches the database" : plural(n, "change", "changes")),
     erd: "ERD",
-    erdTitle: "Show the tables and their relationships as a diagram",
+    erdTip: "ERD: tables and their relationships",
     running: "Running…",
     runStatus: (line: number, done: number, total: number, ms: number) =>
       `Line ${line} · ${done} of ${plural(total, "statement", "statements")} · ${ms} ms`,
@@ -192,7 +191,7 @@ export const en = {
   rows: {
     addRow: "Add row",
     addRowTitle: "Adds a row to the table. Double-click a cell or press Enter to change a value",
-    unsaved: (n: number) => `${plural(n, "row", "rows")} changed, not saved`,
+    unsaved: (n: number) => plural(n, "unsaved row", "unsaved rows"),
     showSql: "Show SQL",
     hideSql: "Hide SQL",
     discard: "Discard",
@@ -409,7 +408,6 @@ export const en = {
   history: {
     title: "Query history",
     button: "History",
-    buttonTitle: "Statements run before, searchable (⌘⇧H)",
     search: "Search SQL",
     thisConnection: "This connection",
     allConnections: "All connections",

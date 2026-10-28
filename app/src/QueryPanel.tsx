@@ -848,7 +848,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             {
               key: "history",
               label: t.history.button,
-              title: t.history.buttonTitle,
+              title: `${t.history.button} (⌘⇧H)`,
               icon: <HistoryIcon />,
               pressed: historyOpen,
               onClick: () => setHistoryOpen(true),
@@ -856,7 +856,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             {
               key: "erd",
               label: t.workspace.erd,
-              title: t.workspace.erdTitle,
+              title: t.workspace.erdTip,
               icon: <DiagramIcon />,
               pressed: erd !== null,
               disabled: !introspection,
@@ -866,8 +866,8 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
               key: "snapshot",
               label: t.workspace.snapshot,
               title: snapshotStatus
-                ? `${t.workspace.snapshotTitle} · ${t.workspace.snapshotChanges(snapshotStatus.changes.length)}`
-                : t.workspace.snapshotTitle,
+                ? `${t.workspace.snapshot} · ${t.workspace.snapshotChanges(snapshotStatus.changes.length)}`
+                : t.workspace.snapshot,
               icon: <BranchIcon />,
               pressed: snapshotOpen,
               badge: snapshotStatus?.changes.length,

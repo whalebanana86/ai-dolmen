@@ -38,7 +38,8 @@ function button(activity: Activity) {
       disabled={activity.disabled}
       aria-pressed={activity.pressed}
       aria-label={activity.label}
-      title={activity.title ?? activity.label}
+      // Drawn by the style sheet: the web view doesn't show a title's tooltip.
+      data-tooltip={activity.title ?? activity.label}
     >
       {activity.icon}
       {!!activity.badge && <span className="activity-badge">{activity.badge > 99 ? "99+" : activity.badge}</span>}

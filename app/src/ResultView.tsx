@@ -139,6 +139,21 @@ export function ResultView({ result, elapsedMs, sql, pending, target, onChange, 
   return (
     <div className="result">
       <ResultHead summary={summary} sql={sql} onReveal={onReveal}>
+        {changes > 0 && (
+          <>
+            <span className="rows-pending">{t.rows.unsaved(changes)}</span>
+            <button className="result-action" onClick={showPreview} disabled={saving}>
+              {preview ? t.rows.hideSql : t.rows.showSql}
+            </button>
+            <button className="result-action" onClick={() => changePending(NO_CHANGES)} disabled={saving}>
+              {t.rows.discard}
+            </button>
+            <button className="result-action primary" onClick={() => save()} disabled={saving} title={t.rows.saveTitle}>
+              {saving ? t.rows.saving : t.rows.save}
+            </button>
+            <span className="result-divider" />
+          </>
+        )}
         {source && (
           <button
             className="result-action"
@@ -155,21 +170,6 @@ export function ResultView({ result, elapsedMs, sql, pending, target, onChange, 
         )}
       </ResultHead>
       {notice && <p className="rows-notice">{notice}</p>}
-      {changes > 0 && (
-        <div className="rows-bar">
-          <span>{t.rows.unsaved(changes)}</span>
-          <span className="spacer" />
-          <button onClick={showPreview} disabled={saving}>
-            {preview ? t.rows.hideSql : t.rows.showSql}
-          </button>
-          <button onClick={() => changePending(NO_CHANGES)} disabled={saving}>
-            {t.rows.discard}
-          </button>
-          <button className="primary" onClick={() => save()} disabled={saving} title={t.rows.saveTitle}>
-            {saving ? t.rows.saving : t.rows.save}
-          </button>
-        </div>
-      )}
       {preview && <pre className="rows-sql">{preview.join("\n")}</pre>}
       {status && status.kind !== "saving" && <SaveStatus status={status} />}
       <ResultGrid
