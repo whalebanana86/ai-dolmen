@@ -62,13 +62,18 @@ interface Editor extends Cell {
 /**
  * A result grid that only renders the rows in view, so large results stay fast.
  * Click a cell to select it, move with the arrow keys, copy with ⌘/Ctrl+C,
- * and drag a header edge to resize a column. When the rows can be changed,
- * double-click a cell or press Enter to edit it, and ⌘⌫ deletes a row.
+ * and drag a header edge to resize a column (double-click one to fit them all
+ * again). When the rows can be changed, double-click a cell or press Enter to
+ * edit it, and ⌘⌫ deletes a row.
  */
 export function ResultGrid({ columns, rows, columnNotes, editing, onCantEdit, problemRow }: Props) {
   const t = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [widths, setWidths] = useState(() => initialWidths(columns, rows));
+  // The columns fill the grid's width, until one is resized by hand.
+  const [natural] = useState(() => initialWidths(columns, rows));
+  const [resized, setResized] = useState<number[] | null>(null);
+  const [space, setSpace] = useState(0);
+  const widths = resized ?? fill(natural, space);
   const [selected, setSelected] = useState<Cell | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   // Read on blur, which can come after Escape has closed the editor.
@@ -87,6 +92,17 @@ export function ResultGrid({ columns, rows, columnNotes, editing, onCantEdit, pr
     overscan: 20,
   });
   const totalWidth = ROW_NUMBER_WIDTH + widths.reduce((sum, width) => sum + width, 0);
+
+  // The width the columns have to fill: the grid's, less the row numbers and a scroll bar.
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const measure = () => setSpace(scroller.clientWidth - ROW_NUMBER_WIDTH);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, []);
 
   // A new row starts being edited at its first cell that takes a value,
   // before the next paint, so keys pressed right away reach the editor.
@@ -249,12 +265,13 @@ export function ResultGrid({ columns, rows, columnNotes, editing, onCantEdit, pr
     event.preventDefault();
     const handle = event.currentTarget;
     const startX = event.clientX;
-    const startWidth = widths[column];
+    // From here the columns keep the widths they have now, rather than filling the grid.
+    const start = widths;
     handle.setPointerCapture(event.pointerId);
 
     const move = (e: globalThis.PointerEvent) => {
-      const width = Math.max(MIN_COLUMN_WIDTH, startWidth + e.clientX - startX);
-      setWidths((current) => current.map((w, i) => (i === column ? width : w)));
+      const width = Math.max(MIN_COLUMN_WIDTH, start[column] + e.clientX - startX);
+      setResized((current) => (current ?? start).map((w, i) => (i === column ? width : w)));
     };
     const stop = () => {
       handle.removeEventListener("pointermove", move);
@@ -314,7 +331,11 @@ export function ResultGrid({ columns, rows, columnNotes, editing, onCantEdit, pr
               title={columnNotes?.[c] ? `${name}\n${columnNotes[c]}` : name}
             >
               {name}
-              <div className="resize-handle" onPointerDown={(e) => startResize(c, e)} />
+              <div
+                className="resize-handle"
+                onPointerDown={(e) => startResize(c, e)}
+                onDoubleClick={() => setResized(null)}
+              />
             </div>
           ))}
         </div>
@@ -412,6 +433,16 @@ function initialWidths(columns: string[], rows: (string | null)[][]) {
     const chars = Math.max(displayWidth(name), ...sample.map((row) => displayWidth(row[c] ?? "NULL")));
     return clamp(Math.ceil(chars * CHAR_WIDTH) + CELL_PADDING, MIN_COLUMN_WIDTH, MAX_INITIAL_COLUMN_WIDTH);
   });
+}
+
+/** Widens the columns in proportion to fill `space`, when together they're narrower. */
+function fill(widths: number[], space: number) {
+  const total = widths.reduce((sum, width) => sum + width, 0);
+  if (total === 0 || total >= space) return widths;
+  const filled = widths.map((width) => Math.floor((width * space) / total));
+  // What rounding down left over goes to the last column, so they meet the edge.
+  filled[filled.length - 1] += space - filled.reduce((sum, width) => sum + width, 0);
+  return filled;
 }
 
 /** Width in monospace cells; Hangul, CJK and other wide characters take two. */
