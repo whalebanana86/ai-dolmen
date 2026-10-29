@@ -2,9 +2,10 @@
 //! a past snapshot can be applied to a (local) database.
 //!
 //! Steps run in phases, as pg_dump orders a restore: create schemas, types and
-//! sequences; drop what depends on things about to change (views, foreign keys,
-//! constraints, indexes) and dropped tables; create functions and tables; alter
-//! tables; add constraints, indexes and foreign keys; create views; drop the rest.
+//! sequences; drop what depends on things about to change (views, policies,
+//! triggers, foreign keys, constraints, indexes) and dropped tables; create
+//! functions and tables; alter tables; add constraints, indexes and foreign
+//! keys; create views, triggers and policies; drop the rest.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -13,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use super::ddl::{self, comment_on, qualified, quote_ident, quote_literal};
 use crate::schema::{
-    Column, Constraint, ConstraintKind, Database, EnumType, FunctionKind, Grant, Identity, Schema,
-    TABLE_PRIVILEGES, Table, View,
+    Column, Constraint, ConstraintKind, Database, EnumType, FunctionKind, Grant, Identity,
+    POLICY_COMMANDS, Schema, TABLE_PRIVILEGES, Table, Trigger, View,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -160,6 +161,8 @@ enum Phase {
     CreateType,
     CreateSequence,
     DropView,
+    DropPolicy,
+    DropTrigger,
     DropForeignKey,
     DropConstraint,
     DropIndex,
@@ -174,6 +177,8 @@ enum Phase {
     CreateIndex,
     AddForeignKey,
     CreateView,
+    CreateTrigger,
+    CreatePolicy,
     DropFunction,
     DropSequence,
     DropType,
@@ -187,7 +192,8 @@ struct Planner {
     blockers: Vec<Blocker>,
     candidates: Vec<Rename>,
     /// Set by changes that can break views on the table: dropped tables and
-    /// columns, type changes and renames. Views are then all recreated.
+    /// columns, type changes and renames. Views and policies, which may read
+    /// any table, are then all recreated.
     reshaped: bool,
     /// Leave views alone unless their own definition changed; see [`plan_keeping_views`].
     keep_views: bool,
@@ -322,8 +328,9 @@ impl Planner {
             }
         }
 
-        // Views go last: whether they must be recreated depends on the tables.
+        // Views and policies go last: whether they must be recreated depends on the tables.
         self.views(current, target);
+        self.policies(current, target);
     }
 
     fn schema(&mut self, current: &Schema, target: &Schema) {
@@ -501,6 +508,23 @@ impl Planner {
         for constraint in foreign_keys(table) {
             self.add_constraint(&name, constraint);
         }
+        for trigger in &table.triggers {
+            self.push(
+                Phase::CreateTrigger,
+                ddl::create_trigger(&name, trigger),
+                false,
+            );
+        }
+        for statement in ddl::row_security(&name, table) {
+            self.push(Phase::AlterTable, statement, false);
+        }
+        for policy in &table.policies {
+            self.push(
+                Phase::CreatePolicy,
+                ddl::create_policy(&name, policy),
+                false,
+            );
+        }
     }
 
     fn drop_table(&mut self, schema: &str, table: &Table) {
@@ -620,6 +644,113 @@ impl Planner {
             );
         }
         self.privileges(Phase::AlterTable, &name, &current.grants, &target.grants);
+
+        // PostgreSQL won't change the type of a column a trigger names, so the
+        // table's triggers are dropped first and created again afterwards.
+        let retyped = target.columns.iter().any(|column| {
+            current
+                .columns
+                .iter()
+                .any(|c| c.name == column.name && c.data_type != column.data_type)
+        });
+        self.triggers(&name, &current.triggers, &target.triggers, retyped);
+
+        if current.row_security != target.row_security {
+            let action = if target.row_security {
+                "ENABLE"
+            } else {
+                "DISABLE"
+            };
+            self.push(
+                Phase::AlterTable,
+                format!("ALTER TABLE {name} {action} ROW LEVEL SECURITY;"),
+                false,
+            );
+        }
+        if current.force_row_security != target.force_row_security {
+            let action = if target.force_row_security {
+                "FORCE"
+            } else {
+                "NO FORCE"
+            };
+            self.push(
+                Phase::AlterTable,
+                format!("ALTER TABLE {name} {action} ROW LEVEL SECURITY;"),
+                false,
+            );
+        }
+    }
+
+    /// Drops triggers that changed or went away and creates changed and new
+    /// ones; with `recreate`, all of them.
+    fn triggers(&mut self, object: &str, current: &[Trigger], target: &[Trigger], recreate: bool) {
+        let recreate = recreate && !self.keep_views;
+        let same = |a: &Trigger, b: &Trigger| a.name == b.name && a.definition == b.definition;
+        for trigger in current {
+            if recreate || !target.iter().any(|t| same(t, trigger)) {
+                self.push(
+                    Phase::DropTrigger,
+                    format!("DROP TRIGGER {} ON {object};", quote_ident(&trigger.name)),
+                    false,
+                );
+            }
+        }
+        for trigger in target {
+            match current.iter().find(|c| same(c, trigger)) {
+                Some(existing) if !recreate => {
+                    if existing.firing != trigger.firing {
+                        self.push(
+                            Phase::CreateTrigger,
+                            ddl::trigger_firing(object, trigger),
+                            false,
+                        );
+                    }
+                }
+                _ => self.push(
+                    Phase::CreateTrigger,
+                    ddl::create_trigger(object, trigger),
+                    false,
+                ),
+            }
+        }
+    }
+
+    /// Drops policies that changed or went away and creates changed and new
+    /// ones, on tables both models have. A policy may read other tables, so
+    /// when any table was reshaped they are all recreated.
+    fn policies(&mut self, current: &Database, target: &Database) {
+        let recreate = self.reshaped && !self.keep_views;
+        for schema in &target.schemas {
+            let Some(existing_schema) = current.schemas.iter().find(|s| s.name == schema.name)
+            else {
+                continue;
+            };
+            for table in &schema.tables {
+                let Some(existing) = existing_schema.tables.iter().find(|t| t.name == table.name)
+                else {
+                    continue;
+                };
+                let name = qualified(&schema.name, &table.name);
+                for policy in &existing.policies {
+                    if recreate || !table.policies.contains(policy) {
+                        self.push(
+                            Phase::DropPolicy,
+                            format!("DROP POLICY {} ON {name};", quote_ident(&policy.name)),
+                            false,
+                        );
+                    }
+                }
+                for policy in &table.policies {
+                    if recreate || !existing.policies.contains(policy) {
+                        self.push(
+                            Phase::CreatePolicy,
+                            ddl::create_policy(&name, policy),
+                            false,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// GRANTs and REVOKEs that turn `current`'s privileges into `target`'s.
@@ -839,6 +970,7 @@ impl Planner {
                         }
                     }
                     self.privileges(Phase::CreateView, &name, &view.grants, &new.grants);
+                    self.triggers(&name, &view.triggers, &new.triggers, false);
                     if view.comment != new.comment {
                         let object = if new.materialized {
                             "MATERIALIZED VIEW"
@@ -902,10 +1034,19 @@ pub(crate) fn statements(sql: &str) -> Vec<String> {
 fn invalid_definitions(database: &Database) -> Vec<Blocker> {
     let mut blockers = Vec::new();
     let mut unknown_privileges = Vec::new();
-    let mut check = |name: String, text: &str, statement: bool| {
-        if !single(text, statement) {
+    let mut check = |name: String, valid: bool| {
+        if !valid {
             blockers.push(Blocker::InvalidDefinition { name });
         }
+    };
+    let expression = |text: &str| single(text, false);
+    let statement = |text: &str| single(text, true);
+    // A trigger's statement must create a trigger, not run something else.
+    let trigger = |trigger: &Trigger| {
+        ["CREATE TRIGGER ", "CREATE CONSTRAINT TRIGGER "]
+            .iter()
+            .any(|start| trigger.definition.starts_with(start))
+            && statement(&trigger.definition)
     };
     for schema in &database.schemas {
         let name = |object: &str| format!("{}.{object}", schema.name);
@@ -913,32 +1054,45 @@ fn invalid_definitions(database: &Database) -> Vec<Blocker> {
             let table_name = name(&table.name);
             for column in &table.columns {
                 let column_name = format!("{table_name}.{}", column.name);
-                check(column_name.clone(), &column.data_type, false);
+                check(column_name.clone(), expression(&column.data_type));
                 if let Some(default) = &column.default {
-                    check(column_name.clone(), default, false);
+                    check(column_name.clone(), expression(default));
                 }
                 if let Some(generated) = &column.generated {
-                    check(column_name, &generated.expression, false);
+                    check(column_name, expression(&generated.expression));
                 }
             }
             for constraint in &table.constraints {
                 check(
                     format!("{table_name}.{}", constraint.name),
-                    &constraint.definition,
-                    false,
+                    expression(&constraint.definition),
                 );
             }
             for index in &table.indexes {
-                check(name(&index.name), &index.definition, true);
+                check(name(&index.name), statement(&index.definition));
             }
             if let Some(key) = &table.partition_key {
-                check(table_name.clone(), key, false);
+                check(table_name.clone(), expression(key));
+            }
+            for t in &table.triggers {
+                check(format!("{table_name}.{}", t.name), trigger(t));
+            }
+            for policy in &table.policies {
+                let valid = POLICY_COMMANDS.contains(&policy.command.as_str())
+                    && [&policy.using, &policy.with_check]
+                        .into_iter()
+                        .flatten()
+                        .all(|text| expression(text));
+                check(format!("{table_name}.{}", policy.name), valid);
             }
         }
         for view in &schema.views {
-            check(name(&view.name), &view.definition, true);
+            check(name(&view.name), statement(&view.definition));
             for index in &view.indexes {
-                check(name(&index.name), &index.definition, true);
+                check(name(&index.name), statement(&index.definition));
+            }
+            for t in &view.triggers {
+                check(format!("{}.{}", name(&view.name), t.name), trigger(t));
             }
         }
         let grants = schema
@@ -956,7 +1110,7 @@ fn invalid_definitions(database: &Database) -> Vec<Blocker> {
             }
         }
         for function in &schema.functions {
-            check(name(&function.name), &function.definition, true);
+            check(name(&function.name), statement(&function.definition));
         }
     }
     blockers.extend(unknown_privileges);
@@ -1153,6 +1307,10 @@ mod tests {
             partition_key: None,
             partition_of: None,
             grants: vec![],
+            triggers: vec![],
+            row_security: false,
+            force_row_security: false,
+            policies: vec![],
             comment: None,
         }
     }
@@ -1379,6 +1537,7 @@ mod tests {
             comment: None,
             indexes: vec![],
             grants: vec![],
+            triggers: vec![],
         };
         let with = |columns: Vec<Column>| {
             database(Schema {
@@ -1421,6 +1580,162 @@ mod tests {
                 "ALTER TABLE app.t ALTER COLUMN id DROP DEFAULT;",
                 "ALTER TABLE app.t ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY;",
             ]
+        );
+    }
+
+    fn trigger(name: &str, when: &str) -> Trigger {
+        Trigger {
+            name: name.into(),
+            definition: format!(
+                "CREATE TRIGGER {name} BEFORE UPDATE ON app.t FOR EACH ROW WHEN ({when}) EXECUTE FUNCTION app.touch()"
+            ),
+            firing: crate::schema::TriggerFiring::Origin,
+        }
+    }
+
+    fn policy(name: &str, using: &str) -> crate::schema::Policy {
+        crate::schema::Policy {
+            name: name.into(),
+            command: "ALL".into(),
+            permissive: true,
+            roles: vec!["PUBLIC".into()],
+            using: Some(using.into()),
+            with_check: None,
+        }
+    }
+
+    #[test]
+    fn changes_triggers_and_recreates_them_around_type_changes() {
+        let with = |data_type: &str, triggers: Vec<Trigger>| {
+            let mut t = table("t", vec![column("n", data_type)], vec![]);
+            t.triggers = triggers;
+            database(app(vec![t]))
+        };
+        let a = trigger("a", "old.n <> new.n");
+        let b = trigger("b", "new.n > 0");
+        let mut off = b.clone();
+        off.firing = crate::schema::TriggerFiring::Disabled;
+
+        // New, changed and dropped triggers; only how one fires changed.
+        let changed = plan(
+            &with("integer", vec![a.clone(), b.clone()]),
+            &with("integer", vec![trigger("a", "new.n < 0"), off.clone()]),
+            &[],
+        );
+        assert_eq!(
+            sql(&changed),
+            [
+                "DROP TRIGGER a ON app.t;",
+                "CREATE TRIGGER a BEFORE UPDATE ON app.t FOR EACH ROW WHEN (new.n < 0) EXECUTE FUNCTION app.touch();",
+                "ALTER TABLE app.t DISABLE TRIGGER b;",
+            ]
+        );
+
+        // PostgreSQL won't retype a column a trigger names.
+        let retyped = plan(
+            &with("integer", vec![a.clone()]),
+            &with("bigint", vec![a.clone()]),
+            &[],
+        );
+        assert_eq!(
+            sql(&retyped),
+            [
+                "DROP TRIGGER a ON app.t;",
+                "ALTER TABLE app.t ALTER COLUMN n TYPE bigint;",
+                "CREATE TRIGGER a BEFORE UPDATE ON app.t FOR EACH ROW WHEN (old.n <> new.n) EXECUTE FUNCTION app.touch();",
+            ]
+        );
+        // Unless PostgreSQL is to follow the change by itself.
+        let kept = plan_keeping_views(
+            &with("integer", vec![a.clone()]),
+            &with("bigint", vec![a]),
+            &[],
+        );
+        assert_eq!(
+            sql(&kept),
+            ["ALTER TABLE app.t ALTER COLUMN n TYPE bigint;"]
+        );
+    }
+
+    #[test]
+    fn turns_on_row_security_and_recreates_policies_around_reshaping() {
+        let with = |columns: Vec<Column>, security: bool, policies| {
+            let mut t = table("t", columns, vec![]);
+            t.row_security = security;
+            t.force_row_security = security;
+            t.policies = policies;
+            database(app(vec![t]))
+        };
+        let owner = || column("owner", "text");
+        let own = policy("own", "owner = CURRENT_USER");
+
+        let on = plan(
+            &with(vec![owner()], false, vec![]),
+            &with(vec![owner()], true, vec![own.clone()]),
+            &[],
+        );
+        assert_eq!(
+            sql(&on),
+            [
+                "ALTER TABLE app.t ENABLE ROW LEVEL SECURITY;",
+                "ALTER TABLE app.t FORCE ROW LEVEL SECURITY;",
+                "CREATE POLICY own ON app.t USING (owner = CURRENT_USER);",
+            ]
+        );
+        let off = plan(
+            &with(vec![owner()], true, vec![own.clone()]),
+            &with(vec![owner()], false, vec![]),
+            &[],
+        );
+        assert_eq!(
+            sql(&off),
+            [
+                "DROP POLICY own ON app.t;",
+                "ALTER TABLE app.t DISABLE ROW LEVEL SECURITY;",
+                "ALTER TABLE app.t NO FORCE ROW LEVEL SECURITY;",
+            ]
+        );
+
+        // A dropped column may be one a policy reads, here or in another table.
+        let everyone = policy("everyone", "true");
+        let reshaped = plan(
+            &with(
+                vec![owner(), column("legacy", "text")],
+                true,
+                vec![everyone.clone(), own.clone()],
+            ),
+            &with(vec![owner()], true, vec![everyone, own]),
+            &[],
+        );
+        assert_eq!(
+            sql(&reshaped),
+            [
+                "DROP POLICY everyone ON app.t;",
+                "DROP POLICY own ON app.t;",
+                "ALTER TABLE app.t DROP COLUMN legacy;",
+                "CREATE POLICY everyone ON app.t USING (true);",
+                "CREATE POLICY own ON app.t USING (owner = CURRENT_USER);",
+            ]
+        );
+    }
+
+    #[test]
+    fn refuses_triggers_and_policies_that_do_something_else() {
+        let current = database(app(vec![table("t", vec![column("id", "integer")], vec![])]));
+        let mut target = current.clone();
+        let mut sneaky = trigger("a", "true");
+        sneaky.definition = "DROP TABLE app.t".into();
+        target.schemas[0].tables[0].triggers.push(sneaky);
+        let mut sneaky = policy("p", "true");
+        sneaky.command = "ALL TO PUBLIC USING (true); DROP TABLE app.t; --".into();
+        target.schemas[0].tables[0].policies.push(sneaky);
+        target.schemas[0].tables[0]
+            .policies
+            .push(policy("q", "true); DROP TABLE app.t; --"));
+        assert_eq!(
+            plan(&current, &target, &[]).blockers,
+            ["app.t.a", "app.t.p", "app.t.q"]
+                .map(|name| Blocker::InvalidDefinition { name: name.into() })
         );
     }
 

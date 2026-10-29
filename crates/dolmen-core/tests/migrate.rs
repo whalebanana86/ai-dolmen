@@ -430,6 +430,10 @@ async fn creates_tables_views_and_functions_from_the_detail_view() {
         partition_key: None,
         partition_of: None,
         grants: vec![],
+        triggers: vec![],
+        row_security: false,
+        force_row_security: false,
+        policies: vec![],
         comment: Some("blog posts".into()),
     };
     let create = |edit: Edit| {
@@ -458,6 +462,7 @@ async fn creates_tables_views_and_functions_from_the_detail_view() {
             comment: None,
             indexes: vec![],
             grants: vec![],
+            triggers: vec![],
         },
     })
     .await;
@@ -707,6 +712,126 @@ async fn keeps_grants_and_view_indexes_when_views_are_recreated() {
     run(
         &session,
         "DROP SCHEMA grant_test CASCADE; DROP ROLE dolmen_test_reader",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn keeps_triggers_row_security_and_policies() {
+    use dolmen_core::schema::{Policy, TriggerFiring};
+
+    let config = config_or_skip!();
+    let session = connect(&config).await;
+    let _exclusive = exclusive().await;
+    let model = |database: Database| {
+        let mut database = database;
+        database.schemas.retain(|s| s.name == "rls_test");
+        database.extensions.clear();
+        database
+    };
+    run(
+        &session,
+        "DROP SCHEMA IF EXISTS rls_test CASCADE;
+         DROP ROLE IF EXISTS dolmen_test_writer;
+         CREATE ROLE dolmen_test_writer;
+         CREATE SCHEMA rls_test;
+         CREATE FUNCTION rls_test.touch() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END';
+         CREATE TABLE rls_test.notes (id int PRIMARY KEY, owner text, n int, legacy text);
+         CREATE TRIGGER notes_n BEFORE UPDATE OF n ON rls_test.notes
+           FOR EACH ROW WHEN (OLD.n IS DISTINCT FROM NEW.n) EXECUTE FUNCTION rls_test.touch();
+         CREATE CONSTRAINT TRIGGER notes_check AFTER INSERT ON rls_test.notes
+           DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION rls_test.touch();
+         ALTER TABLE rls_test.notes DISABLE TRIGGER notes_check;
+         ALTER TABLE rls_test.notes ENABLE ROW LEVEL SECURITY;
+         ALTER TABLE rls_test.notes FORCE ROW LEVEL SECURITY;
+         CREATE POLICY own ON rls_test.notes USING (owner = current_user);
+         CREATE POLICY legacy_writers ON rls_test.notes AS RESTRICTIVE FOR UPDATE TO dolmen_test_writer
+           USING (legacy IS NULL) WITH CHECK (n < (SELECT count(*) FROM rls_test.notes));
+         CREATE VIEW rls_test.ids AS SELECT id FROM rls_test.notes;
+         CREATE TRIGGER ids_insert INSTEAD OF INSERT ON rls_test.ids
+           FOR EACH ROW EXECUTE FUNCTION rls_test.touch();
+         CREATE TABLE rls_test.events (at date, n int) PARTITION BY RANGE (at);
+         CREATE TABLE rls_test.events_2026 PARTITION OF rls_test.events
+           FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
+         CREATE TRIGGER events_touch BEFORE UPDATE ON rls_test.events
+           FOR EACH ROW EXECUTE FUNCTION rls_test.touch();",
+    )
+    .await;
+    let original = model(session.introspect().await.unwrap());
+    let schema = &original.schemas[0];
+    let table = |name: &str| schema.tables.iter().find(|t| t.name == name).unwrap();
+    let notes = table("notes");
+    assert!(notes.row_security && notes.force_row_security);
+    assert_eq!(
+        notes
+            .triggers
+            .iter()
+            .map(|t| (t.name.as_str(), t.firing))
+            .collect::<Vec<_>>(),
+        [
+            ("notes_check", TriggerFiring::Disabled),
+            ("notes_n", TriggerFiring::Origin)
+        ]
+    );
+    assert_eq!(
+        notes.policies[1],
+        Policy {
+            name: "own".into(),
+            command: "ALL".into(),
+            permissive: true,
+            roles: vec!["PUBLIC".into()],
+            using: Some("owner = CURRENT_USER".into()),
+            with_check: None,
+        }
+    );
+    assert_eq!(notes.policies[0].roles, ["dolmen_test_writer"]);
+    assert_eq!(schema.views[0].triggers.len(), 1);
+    // The partition's copy of its parent's trigger comes with the parent's.
+    assert_eq!(table("events").triggers.len(), 1);
+    assert!(table("events_2026").triggers.is_empty());
+
+    // A schema recreated from nothing has them all back.
+    run(
+        &session,
+        "DROP SCHEMA rls_test CASCADE; CREATE SCHEMA rls_test",
+    )
+    .await;
+    let empty = session.introspect().await.unwrap();
+    apply(&session, &plan(&empty, &original, &[])).await;
+    assert_eq!(model(session.introspect().await.unwrap()), original);
+
+    // Retyping a column a trigger names and dropping one a policy reads
+    // takes them down and puts them back.
+    let mut reshaped = original.clone();
+    fn notes_of(database: &mut Database) -> &mut dolmen_core::schema::Table {
+        let tables = &mut database.schemas[0].tables;
+        tables.iter_mut().find(|t| t.name == "notes").unwrap()
+    }
+    let notes = notes_of(&mut reshaped);
+    notes.columns.retain(|c| c.name != "legacy");
+    notes
+        .columns
+        .iter_mut()
+        .find(|c| c.name == "n")
+        .unwrap()
+        .data_type = "bigint".into();
+    notes.policies[0].using = Some("owner IS NOT NULL".into());
+    notes.triggers[0].firing = TriggerFiring::Always;
+    apply(&session, &plan(&original, &reshaped, &[])).await;
+    let after = model(session.introspect().await.unwrap());
+    assert_eq!(after, reshaped);
+
+    // And row-level security can be turned off again.
+    let mut open = reshaped.clone();
+    let notes = notes_of(&mut open);
+    notes.row_security = false;
+    notes.force_row_security = false;
+    notes.policies.clear();
+    apply(&session, &plan(&reshaped, &open, &[])).await;
+    assert_eq!(model(session.introspect().await.unwrap()), open);
+    run(
+        &session,
+        "DROP SCHEMA rls_test CASCADE; DROP ROLE dolmen_test_writer",
     )
     .await;
 }

@@ -47,7 +47,73 @@ pub struct Table {
     /// Privileges held by roles other than the owner.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
+    /// Triggers, besides the ones PostgreSQL makes for foreign keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub triggers: Vec<Trigger>,
+    /// Whether row-level security is on, so only rows the policies allow are seen.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub row_security: bool,
+    /// Whether row-level security applies to the table's owner too.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub force_row_security: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policies: Vec<Policy>,
 }
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+/// A trigger on a table or view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Trigger {
+    pub name: String,
+    /// The full `CREATE TRIGGER` statement.
+    pub definition: String,
+    /// When it fires; left out of the JSON for the usual case.
+    #[serde(default, skip_serializing_if = "TriggerFiring::is_origin")]
+    pub firing: TriggerFiring,
+}
+
+/// When a trigger fires, as `ALTER TABLE ... ENABLE` or `DISABLE TRIGGER` sets it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TriggerFiring {
+    /// The usual: in every session but a replica's.
+    #[default]
+    Origin,
+    /// Only in replica sessions.
+    Replica,
+    /// In every session.
+    Always,
+    Disabled,
+}
+
+impl TriggerFiring {
+    fn is_origin(&self) -> bool {
+        *self == TriggerFiring::Origin
+    }
+}
+
+/// A row-level security policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Policy {
+    pub name: String,
+    /// `ALL`, `SELECT`, `INSERT`, `UPDATE` or `DELETE`.
+    pub command: String,
+    /// Permissive policies are alternatives; restrictive ones must all pass.
+    pub permissive: bool,
+    /// The roles it applies to, or `PUBLIC`.
+    pub roles: Vec<String>,
+    /// Which existing rows it lets through (`USING`).
+    pub using: Option<String>,
+    /// Which new rows it accepts (`WITH CHECK`).
+    pub with_check: Option<String>,
+}
+
+/// The commands a policy can be for.
+pub const POLICY_COMMANDS: &[&str] = &["ALL", "DELETE", "INSERT", "SELECT", "UPDATE"];
 
 /// Privileges a role holds on a table or view, besides its owner's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,6 +239,9 @@ pub struct View {
     pub indexes: Vec<Index>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<Grant>,
+    /// `INSTEAD OF` triggers and the like.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub triggers: Vec<Trigger>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

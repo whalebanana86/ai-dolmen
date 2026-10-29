@@ -37,6 +37,10 @@ fn table(name: &str, columns: Vec<Column>) -> Table {
         partition_key: None,
         partition_of: None,
         grants: vec![],
+        triggers: vec![],
+        row_security: false,
+        force_row_security: false,
+        policies: vec![],
         comment: None,
     }
 }
@@ -74,6 +78,7 @@ fn database() -> Database {
                     comment: None,
                     indexes: vec![],
                     grants: vec![],
+                    triggers: vec![],
                 }],
                 ..empty_schema("public")
             },

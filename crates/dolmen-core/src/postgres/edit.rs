@@ -189,8 +189,13 @@ fn view_plan(schema: &str, current: &View, target: &View) -> Plan {
             steps.push(format!("DROP MATERIALIZED VIEW {name};"));
             steps.push(ddl::create_view(schema, target));
         } else {
-            // create_view writes the comments too, which keeps them as they are.
-            steps.push(ddl::create_view(schema, target).replacen(
+            // create_view writes the comments too, which keeps them as they
+            // are. Replacing a view keeps its triggers, so they aren't written.
+            let replaced = View {
+                triggers: Vec::new(),
+                ..target.clone()
+            };
+            steps.push(ddl::create_view(schema, &replaced).replacen(
                 "CREATE VIEW ",
                 "CREATE OR REPLACE VIEW ",
                 1,
@@ -307,6 +312,10 @@ mod tests {
                     partition_key: None,
                     partition_of: None,
                     grants: vec![],
+                    triggers: vec![],
+                    row_security: false,
+                    force_row_security: false,
+                    policies: vec![],
                     comment: None,
                 }],
                 views: vec![],
@@ -424,6 +433,7 @@ mod tests {
             comment: Some("just names".into()),
             indexes: vec![],
             grants: vec![],
+            triggers: vec![],
         };
         let edit = Edit::CreateView {
             schema: "app".into(),

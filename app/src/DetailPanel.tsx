@@ -12,6 +12,7 @@ import {
   SchemaObject,
   SqlFunction,
   Table,
+  Trigger,
   View,
   errorMessage,
   objects,
@@ -465,6 +466,7 @@ function TableDetail({
       </Section>
 
       <Grants grants={table.grants ?? []} />
+      <RowSecurity table={table} />
 
       <Section title={`${t.detail.indexes} (${table.indexes.length})`}>
         {table.indexes.length === 0 ? (
@@ -480,7 +482,65 @@ function TableDetail({
           </ul>
         )}
       </Section>
+
+      <Triggers triggers={table.triggers ?? []} />
     </>
+  );
+}
+
+function Triggers({ triggers }: { triggers: Trigger[] }) {
+  const t = useT();
+  return (
+    <Section title={`${t.detail.triggers} (${triggers.length})`}>
+      {triggers.length === 0 ? (
+        <p className="muted">{t.detail.none}</p>
+      ) : (
+        <ul className="definitions">
+          {triggers.map((trigger) => (
+            <li key={trigger.name}>
+              <span className="mono">
+                {trigger.name}
+                {trigger.firing && trigger.firing !== "origin" && (
+                  <span className="muted"> · {t.detail.firing[trigger.firing]}</span>
+                )}
+              </span>
+              <code>{trigger.definition}</code>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
+/** Whether row-level security is on, and the policies that say which rows each role sees. */
+function RowSecurity({ table }: { table: Table }) {
+  const t = useT();
+  const policies = table.policies ?? [];
+  const state = !table.rowSecurity
+    ? t.detail.rowSecurityOff
+    : table.forceRowSecurity
+      ? t.detail.rowSecurityForced
+      : t.detail.rowSecurityOn;
+  return (
+    <Section title={t.detail.rowSecurity}>
+      <p className="muted">{state}</p>
+      {policies.length > 0 && (
+        <ul className="definitions">
+          {policies.map((policy) => (
+            <li key={policy.name}>
+              <span className="mono">{policy.name}</span>
+              <code>
+                {policy.permissive ? "" : "AS RESTRICTIVE "}
+                FOR {policy.command} TO {policy.roles.join(", ")}
+                {policy.using !== null && ` USING (${policy.using})`}
+                {policy.withCheck !== null && ` WITH CHECK (${policy.withCheck})`}
+              </code>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }
 
@@ -529,6 +589,7 @@ function ViewDetail({ view }: { view: View }) {
         </Section>
       )}
       <Grants grants={view.grants ?? []} />
+      {(view.triggers ?? []).length > 0 && <Triggers triggers={view.triggers!} />}
     </>
   );
 }

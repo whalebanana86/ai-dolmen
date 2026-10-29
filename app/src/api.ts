@@ -183,6 +183,33 @@ export interface Table {
   partitionOf?: { schema: string; table: string; bound: string } | null;
   /** Privileges held by roles other than the owner. */
   grants?: Grant[];
+  /** Triggers, besides the ones PostgreSQL makes for foreign keys. */
+  triggers?: Trigger[];
+  /** Whether row-level security is on, so only rows the policies allow are seen. */
+  rowSecurity?: boolean;
+  /** Whether row-level security applies to the table's owner too. */
+  forceRowSecurity?: boolean;
+  policies?: Policy[];
+}
+
+export interface Trigger {
+  name: string;
+  /** The full CREATE TRIGGER statement. */
+  definition: string;
+  /** Left out when it fires the usual way ("origin"). */
+  firing?: "origin" | "replica" | "always" | "disabled";
+}
+
+/** A row-level security policy. */
+export interface Policy {
+  name: string;
+  command: "ALL" | "SELECT" | "INSERT" | "UPDATE" | "DELETE";
+  /** Permissive policies are alternatives; restrictive ones must all pass. */
+  permissive: boolean;
+  /** Roles it applies to, or "PUBLIC". */
+  roles: string[];
+  using: string | null;
+  withCheck: string | null;
 }
 
 /** Privileges a role (or PUBLIC) holds on a table or view, besides its owner's. */
@@ -202,6 +229,7 @@ export interface View {
   /** A materialized view's indexes. */
   indexes?: Index[];
   grants?: Grant[];
+  triggers?: Trigger[];
 }
 
 export interface SqlFunction {

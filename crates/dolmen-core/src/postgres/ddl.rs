@@ -6,8 +6,8 @@
 use serde::Deserialize;
 
 use crate::schema::{
-    Column, Constraint, EnumType, Extension, Function, Grant, Identity, Index, PartitionOf,
-    Sequence, Table, TableKind, View,
+    Column, Constraint, EnumType, Extension, Function, Grant, Identity, Index, PartitionOf, Policy,
+    Sequence, Table, TableKind, Trigger, TriggerFiring, View,
 };
 
 /// Any schema object, tagged by `type` so the app can ask for one object's DDL.
@@ -44,12 +44,27 @@ pub fn create_extension(extension: &Extension) -> String {
     )
 }
 
-/// The table with its columns and constraints, then its indexes and comments.
+/// The table with its columns and constraints, then its indexes, triggers,
+/// row-level security, comments and grants.
 pub fn create_table(schema: &str, table: &Table) -> String {
     let name = qualified(schema, &table.name);
     let mut ddl = table_statement(schema, table, table.constraints.iter());
     for index in &table.indexes {
         ddl.push_str(&format!("\n{}\n", create_index(table, index)));
+    }
+    push_triggers(&mut ddl, &name, &table.triggers);
+    let security = row_security(&name, table);
+    if !security.is_empty() {
+        ddl.push('\n');
+        for statement in security {
+            ddl.push_str(&format!("{statement}\n"));
+        }
+    }
+    if !table.policies.is_empty() {
+        ddl.push('\n');
+        for policy in &table.policies {
+            ddl.push_str(&format!("{}\n", create_policy(&name, policy)));
+        }
     }
     push_comments(
         &mut ddl,
@@ -219,8 +234,75 @@ pub fn create_view(schema: &str, view: &View) -> String {
     for index in &view.indexes {
         ddl.push_str(&format!("\n{};\n", index.definition));
     }
+    push_triggers(&mut ddl, &name, &view.triggers);
     push_grants(&mut ddl, &name, &view.grants);
     ddl
+}
+
+fn push_triggers(ddl: &mut String, name: &str, triggers: &[Trigger]) {
+    for trigger in triggers {
+        ddl.push_str(&format!("\n{}\n", create_trigger(name, trigger)));
+    }
+}
+
+/// The trigger's statement, then how it fires unless that is the usual way.
+pub(crate) fn create_trigger(table: &str, trigger: &Trigger) -> String {
+    let mut sql = format!("{};", trigger.definition.trim_end().trim_end_matches(';'));
+    if trigger.firing != TriggerFiring::Origin {
+        sql.push('\n');
+        sql.push_str(&trigger_firing(table, trigger));
+    }
+    sql
+}
+
+/// `ALTER TABLE ... ENABLE` or `DISABLE TRIGGER`, setting when the trigger fires.
+pub(crate) fn trigger_firing(table: &str, trigger: &Trigger) -> String {
+    let action = match trigger.firing {
+        TriggerFiring::Origin => "ENABLE",
+        TriggerFiring::Replica => "ENABLE REPLICA",
+        TriggerFiring::Always => "ENABLE ALWAYS",
+        TriggerFiring::Disabled => "DISABLE",
+    };
+    format!(
+        "ALTER TABLE {table} {action} TRIGGER {};",
+        quote_ident(&trigger.name)
+    )
+}
+
+/// The statements that turn on row-level security as the table has it.
+pub(crate) fn row_security(name: &str, table: &Table) -> Vec<String> {
+    let mut statements = Vec::new();
+    if table.row_security {
+        statements.push(format!("ALTER TABLE {name} ENABLE ROW LEVEL SECURITY;"));
+    }
+    if table.force_row_security {
+        statements.push(format!("ALTER TABLE {name} FORCE ROW LEVEL SECURITY;"));
+    }
+    statements
+}
+
+/// `CREATE POLICY`, written the way pg_dump writes it: `FOR ALL` and `TO
+/// PUBLIC` are left out, as they are the defaults.
+pub(crate) fn create_policy(table: &str, policy: &Policy) -> String {
+    let mut sql = format!("CREATE POLICY {} ON {table}", quote_ident(&policy.name));
+    if !policy.permissive {
+        sql.push_str(" AS RESTRICTIVE");
+    }
+    if policy.command != "ALL" {
+        sql.push_str(&format!(" FOR {}", policy.command));
+    }
+    if !policy.roles.is_empty() && policy.roles != ["PUBLIC"] {
+        let roles: Vec<String> = policy.roles.iter().map(|r| grantee(r)).collect();
+        sql.push_str(&format!(" TO {}", roles.join(", ")));
+    }
+    if let Some(using) = &policy.using {
+        sql.push_str(&format!(" USING ({using})"));
+    }
+    if let Some(check) = &policy.with_check {
+        sql.push_str(&format!(" WITH CHECK ({check})"));
+    }
+    sql.push(';');
+    sql
 }
 
 fn push_grants(ddl: &mut String, name: &str, grants: &[Grant]) {
@@ -580,6 +662,10 @@ mod tests {
             partition_key: None,
             partition_of: None,
             grants: vec![],
+            triggers: vec![],
+            row_security: false,
+            force_row_security: false,
+            policies: vec![],
             comment: Some("orders".into()),
         };
 
@@ -596,6 +682,63 @@ CREATE INDEX order_status_idx ON public.\"order\" USING btree (status);
 
 COMMENT ON TABLE public.\"order\" IS 'orders';
 COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
+"
+        );
+    }
+
+    #[test]
+    fn writes_triggers_row_security_and_policies() {
+        use crate::schema::{Policy, Trigger, TriggerFiring};
+        let table = Table {
+            name: "notes".into(),
+            kind: TableKind::Table,
+            columns: vec![column("owner", "text")],
+            constraints: vec![],
+            indexes: vec![],
+            partition_key: None,
+            partition_of: None,
+            grants: vec![],
+            triggers: vec![Trigger {
+                name: "notes_touch".into(),
+                definition: "CREATE TRIGGER notes_touch BEFORE UPDATE ON app.notes FOR EACH ROW EXECUTE FUNCTION app.touch()".into(),
+                firing: TriggerFiring::Disabled,
+            }],
+            row_security: true,
+            force_row_security: true,
+            policies: vec![
+                Policy {
+                    name: "own".into(),
+                    command: "ALL".into(),
+                    permissive: true,
+                    roles: vec!["PUBLIC".into()],
+                    using: Some("owner = CURRENT_USER".into()),
+                    with_check: None,
+                },
+                Policy {
+                    name: "Writers".into(),
+                    command: "INSERT".into(),
+                    permissive: false,
+                    roles: vec!["app".into(), "Editor".into()],
+                    using: None,
+                    with_check: Some("owner IS NOT NULL".into()),
+                },
+            ],
+            comment: None,
+        };
+        assert_eq!(
+            create_table("app", &table),
+            "CREATE TABLE app.notes (
+    owner text
+);
+
+CREATE TRIGGER notes_touch BEFORE UPDATE ON app.notes FOR EACH ROW EXECUTE FUNCTION app.touch();
+ALTER TABLE app.notes DISABLE TRIGGER notes_touch;
+
+ALTER TABLE app.notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app.notes FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY own ON app.notes USING (owner = CURRENT_USER);
+CREATE POLICY \"Writers\" ON app.notes AS RESTRICTIVE FOR INSERT TO app, \"Editor\" WITH CHECK (owner IS NOT NULL);
 "
         );
     }
@@ -622,6 +765,10 @@ COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
             partition_key: None,
             partition_of: None,
             grants: vec![],
+            triggers: vec![],
+            row_security: false,
+            force_row_security: false,
+            policies: vec![],
             comment: None,
         };
         assert_eq!(
@@ -641,6 +788,10 @@ COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
             partition_key: Some("RANGE (at)".into()),
             partition_of: None,
             grants: vec![],
+            triggers: vec![],
+            row_security: false,
+            force_row_security: false,
+            policies: vec![],
             comment: None,
         };
         assert_eq!(
@@ -659,6 +810,7 @@ COMMENT ON COLUMN public.\"order\".status IS 'customer''s state';
             comment: None,
             indexes: vec![],
             grants: vec![],
+            triggers: vec![],
         };
         assert_eq!(
             create_view("public", &view),

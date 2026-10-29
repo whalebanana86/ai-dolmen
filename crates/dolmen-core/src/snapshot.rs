@@ -5,7 +5,7 @@
 //! ```text
 //! extensions.sql
 //! <schema>/schema.sql             CREATE SCHEMA (not for public, which every database has)
-//! <schema>/tables/<table>.sql     with its constraints, indexes and comments
+//! <schema>/tables/<table>.sql     with its constraints, indexes, triggers, policies and comments
 //! <schema>/views/<view>.sql
 //! <schema>/functions/<name>.sql   every overload of the name
 //! <schema>/sequences/<name>.sql

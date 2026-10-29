@@ -11,8 +11,8 @@ use tokio_postgres::GenericClient;
 use crate::Error;
 use crate::schema::{
     Column, Constraint, ConstraintKind, Database, EnumType, Extension, ForeignKey, Function,
-    FunctionKind, Generated, Grant, Identity, Index, PartitionOf, Schema, Sequence, Table,
-    TableKind, View,
+    FunctionKind, Generated, Grant, Identity, Index, PartitionOf, Policy, Schema, Sequence, Table,
+    TableKind, Trigger, TriggerFiring, View,
 };
 
 /// Matches user schemas through the alias `n` for `pg_namespace`.
@@ -129,7 +129,8 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                         pg_catalog.obj_description(c.oid, 'pg_class'),
                         CASE WHEN c.relkind = 'p' THEN pg_catalog.pg_get_partkeydef(c.oid) END,
                         CASE WHEN c.relispartition THEN pg_catalog.pg_get_expr(c.relpartbound, c.oid) END,
-                        parent.nspname::text, parent.relname::text
+                        parent.nspname::text, parent.relname::text,
+                        c.relrowsecurity, c.relforcerowsecurity
                  FROM pg_catalog.pg_class c
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                  LEFT JOIN LATERAL (
@@ -179,6 +180,10 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                         _ => None,
                     },
                     grants: Vec::new(),
+                    triggers: Vec::new(),
+                    row_security: row.get(10),
+                    force_row_security: row.get(11),
+                    policies: Vec::new(),
                 });
                 Relation::Table {
                     schema,
@@ -195,6 +200,7 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                     comment,
                     indexes: Vec::new(),
                     grants: Vec::new(),
+                    triggers: Vec::new(),
                 });
                 Relation::View {
                     schema,
@@ -369,6 +375,85 @@ pub(super) async fn introspect(client: &impl GenericClient) -> Result<Database, 
                 grantable,
             }),
         }
+    }
+
+    // Triggers PostgreSQL keeps for foreign keys are internal, and the copies
+    // it keeps on partitions belong to the parent's trigger.
+    for row in client
+        .query(
+            &format!(
+                "SELECT t.tgrelid, t.tgname, pg_catalog.pg_get_triggerdef(t.oid, true),
+                        t.tgenabled::text
+                 FROM pg_catalog.pg_trigger t
+                 JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                 WHERE NOT t.tgisinternal AND t.tgparentid = 0 AND {USER_SCHEMAS}
+                 ORDER BY t.tgrelid, t.tgname COLLATE \"C\""
+            ),
+            &[],
+        )
+        .await?
+    {
+        let trigger = Trigger {
+            name: row.get(1),
+            definition: row.get(2),
+            firing: match row.get::<_, &str>(3) {
+                "R" => TriggerFiring::Replica,
+                "A" => TriggerFiring::Always,
+                "D" => TriggerFiring::Disabled,
+                _ => TriggerFiring::Origin,
+            },
+        };
+        match relations.get(&row.get::<_, u32>(0)) {
+            Some(&Relation::Table { schema, table }) => {
+                schemas[schema].tables[table].triggers.push(trigger)
+            }
+            Some(&Relation::View { schema, view }) => {
+                schemas[schema].views[view].triggers.push(trigger)
+            }
+            None => {}
+        }
+    }
+
+    for row in client
+        .query(
+            &format!(
+                "SELECT p.polrelid, p.polname, p.polcmd::text, p.polpermissive,
+                        ARRAY(SELECT role FROM (
+                                  SELECT CASE WHEN r.oid = 0 THEN 'PUBLIC'
+                                              ELSE pg_catalog.pg_get_userbyid(r.oid)::text END AS role
+                                  FROM unnest(p.polroles) r(oid)) roles
+                              ORDER BY role COLLATE \"C\"),
+                        pg_catalog.pg_get_expr(p.polqual, p.polrelid, true),
+                        pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid, true)
+                 FROM pg_catalog.pg_policy p
+                 JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                 WHERE {USER_SCHEMAS}
+                 ORDER BY p.polrelid, p.polname COLLATE \"C\""
+            ),
+            &[],
+        )
+        .await?
+    {
+        let Some(&Relation::Table { schema, table }) = relations.get(&row.get::<_, u32>(0)) else {
+            continue;
+        };
+        let command = match row.get::<_, &str>(2) {
+            "r" => "SELECT",
+            "a" => "INSERT",
+            "w" => "UPDATE",
+            "d" => "DELETE",
+            _ => "ALL",
+        };
+        schemas[schema].tables[table].policies.push(Policy {
+            name: row.get(1),
+            command: command.to_owned(),
+            permissive: row.get(3),
+            roles: row.get(4),
+            using: row.get(5),
+            with_check: row.get(6),
+        });
     }
 
     for row in client
