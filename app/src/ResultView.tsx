@@ -35,7 +35,8 @@ interface Props {
   /** Selects the statement in the editor. */
   onReveal: () => void;
   /** Saves the statement's rows to a file. */
-  onExport: () => void;
+  /** Without it, the result has no export button. */
+  onExport?: () => void;
 }
 
 type Status =
@@ -163,7 +164,7 @@ export function ResultView({ result, elapsedMs, sql, pending, target, onChange, 
             {t.rows.addRow}
           </button>
         )}
-        {result.columns.length > 0 && (
+        {result.columns.length > 0 && onExport && (
           <button className="result-action" onClick={onExport} title={t.results.exportTitle}>
             {t.results.export}
           </button>

@@ -38,6 +38,7 @@ fn local() -> SavedConnection {
     SavedConnection {
         id: String::new(),
         name: "local".into(),
+        engine: Default::default(),
         host: "localhost".into(),
         port: 5432,
         user: "postgres".into(),

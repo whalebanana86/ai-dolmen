@@ -4,6 +4,8 @@ use std::ops::Range;
 
 use serde::Serialize;
 
+use crate::connections::Engine;
+
 /// Splits PostgreSQL SQL text into statements.
 ///
 /// Returns the byte range of each statement, from its first token to its
@@ -69,8 +71,28 @@ pub fn split_statements(sql: &str) -> Vec<Range<usize>> {
 /// statements, the previous one wins while the cursor is still on its last line;
 /// otherwise the next one does.
 pub fn statement_at(sql: &str, offset: usize) -> Option<Range<usize>> {
+    pick(sql, offset, split_statements(sql))
+}
+
+/// The statements in `text`, written for `engine`: SQL for the SQL
+/// databases, one command a line for Redis, mongosh statements for MongoDB.
+pub fn split_for(engine: Engine, text: &str) -> Vec<Range<usize>> {
+    match engine {
+        Engine::Postgres => split_statements(text),
+        Engine::MySql | Engine::MariaDb => split_mysql_statements(text),
+        Engine::Redis => split_lines(text),
+        Engine::MongoDb | Engine::DocumentDb => crate::mongo::statement_ranges(text),
+    }
+}
+
+/// [`statement_at`] for text written for `engine`.
+pub fn statement_at_for(engine: Engine, text: &str, offset: usize) -> Option<Range<usize>> {
+    pick(text, offset, split_for(engine, text))
+}
+
+/// The statement among `statements` to run for a cursor at `offset`.
+fn pick(sql: &str, offset: usize, statements: Vec<Range<usize>>) -> Option<Range<usize>> {
     let offset = offset.min(sql.len());
-    let statements = split_statements(sql);
 
     if let Some(statement) = statements
         .iter()
@@ -86,6 +108,123 @@ pub fn statement_at(sql: &str, offset: usize) -> Option<Range<usize>> {
         (_, Some(next)) => Some(next.clone()),
         (previous, None) => previous.cloned(),
     }
+}
+
+/// Splits MySQL or MariaDB SQL text into statements, as the `mysql` client
+/// does: `#` and `-- ` comments, backslash escapes in strings, backquoted
+/// names, and `DELIMITER` lines, which change what ends a statement so a
+/// procedure's body can hold `;`. A custom delimiter is left out of the
+/// statement's range, as the server doesn't know it; `;` is kept.
+pub fn split_mysql_statements(sql: &str) -> Vec<Range<usize>> {
+    let bytes = sql.as_bytes();
+    let mut delimiter: &[u8] = b";";
+    let mut statements = Vec::new();
+    let mut start = None;
+    let mut end = 0;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if start.is_none() && at_line_start(bytes, i) && is_delimiter_command(&bytes[i..]) {
+            let line_end = bytes[i..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(bytes.len(), |n| i + n);
+            let word = bytes[i + "delimiter".len()..line_end]
+                .split(u8::is_ascii_whitespace)
+                .find(|word| !word.is_empty());
+            if let Some(word) = word {
+                delimiter = word;
+            }
+            i = line_end;
+            continue;
+        }
+        match bytes[i] {
+            b'-' if bytes.get(i + 1) == Some(&b'-')
+                && bytes.get(i + 2).is_none_or(u8::is_ascii_whitespace) =>
+            {
+                i = line_comment_end(bytes, i);
+                continue;
+            }
+            b'#' => {
+                i = line_comment_end(bytes, i);
+                continue;
+            }
+            // `/*! ... */` is code for MySQL, so it belongs to the statement.
+            b'/' if bytes.get(i + 1) == Some(&b'*') && bytes.get(i + 2) != Some(&b'!') => {
+                i = flat_comment_end(bytes, i);
+                continue;
+            }
+            _ if bytes[i..].starts_with(delimiter) => {
+                if let Some(start) = start.take() {
+                    let kept = if delimiter == b";" { i + 1 } else { end };
+                    statements.push(start..kept);
+                }
+                i += delimiter.len();
+                continue;
+            }
+            byte if byte.is_ascii_whitespace() => {
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        start.get_or_insert(i);
+        i = match bytes[i] {
+            b'\'' => quoted_end(bytes, i, b'\'', true),
+            b'"' => quoted_end(bytes, i, b'"', true),
+            b'`' => quoted_end(bytes, i, b'`', false),
+            b'/' if bytes.get(i + 1) == Some(&b'*') => flat_comment_end(bytes, i),
+            _ => i + 1,
+        };
+        end = i;
+    }
+
+    if let Some(start) = start {
+        statements.push(start..end);
+    }
+    statements
+}
+
+/// Whether `rest` starts with the `mysql` client's `DELIMITER` command.
+fn is_delimiter_command(rest: &[u8]) -> bool {
+    let word = b"delimiter";
+    rest.len() > word.len()
+        && rest[..word.len()].eq_ignore_ascii_case(word)
+        && rest[word.len()].is_ascii_whitespace()
+}
+
+/// Whether only spaces and tabs come before `i` on its line.
+fn at_line_start(bytes: &[u8], i: usize) -> bool {
+    bytes[..i]
+        .iter()
+        .rev()
+        .take_while(|&&b| b != b'\n')
+        .all(|&b| b == b' ' || b == b'\t' || b == b'\r')
+}
+
+/// End of a `/* ... */` comment that doesn't nest, as in MySQL.
+fn flat_comment_end(bytes: &[u8], start: usize) -> usize {
+    bytes[start + 2..]
+        .windows(2)
+        .position(|pair| pair == b"*/")
+        .map_or(bytes.len(), |close| start + 2 + close + 2)
+}
+
+/// One Redis command a line, as `redis-cli` reads them: blank lines and
+/// lines starting with `#` aren't commands.
+fn split_lines(text: &str) -> Vec<Range<usize>> {
+    let mut commands = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            let start = offset + (line.len() - line.trim_start().len());
+            commands.push(start..start + trimmed.len());
+        }
+        offset += line.len();
+    }
+    commands
 }
 
 /// What a statement can destroy, to ask before it runs.
@@ -396,6 +535,51 @@ fn is_identifier_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn splits_mysql_text_like_the_mysql_client() {
+        use super::split_mysql_statements;
+        let text = |sql: &str| -> Vec<String> {
+            split_mysql_statements(sql)
+                .into_iter()
+                .map(|range| sql[range].to_owned())
+                .collect()
+        };
+        assert_eq!(
+            text("SELECT 'a;\\'b'; # a ; comment\nSELECT `x;y` / 2 -- c;\n;SELECT \"q\\\";\";"),
+            [
+                "SELECT 'a;\\'b';",
+                "SELECT `x;y` / 2 -- c;\n;",
+                "SELECT \"q\\\";\";"
+            ]
+        );
+        // `--` without a space after it isn't a comment in MySQL.
+        assert_eq!(text("SELECT 1--1;"), ["SELECT 1--1;"]);
+        assert_eq!(
+            text(
+                "DELIMITER $$\nCREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END$$\nDELIMITER ;\nCALL p();"
+            ),
+            [
+                "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
+                "CALL p();"
+            ]
+        );
+        assert_eq!(
+            text("/*!40101 SET NAMES utf8 */; /* plain; */ SELECT 1"),
+            ["/*!40101 SET NAMES utf8 */;", "SELECT 1"]
+        );
+    }
+
+    #[test]
+    fn splits_redis_commands_by_line() {
+        use super::split_for;
+        use crate::connections::Engine;
+        let text = "SET a 1\n\n  # note\n  GET \"a b\"  \r\nDEL a";
+        let commands: Vec<&str> = split_for(Engine::Redis, text)
+            .into_iter()
+            .map(|range| &text[range])
+            .collect();
+        assert_eq!(commands, ["SET a 1", "GET \"a b\"", "DEL a"]);
+    }
 
     #[test]
     fn strips_what_follows_the_last_token() {

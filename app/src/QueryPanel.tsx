@@ -18,6 +18,8 @@ import {
   history,
   isAppError,
   AiTask,
+  ENGINE_NAMES,
+  Engine,
   pg,
   snapshots,
   sqlText,
@@ -25,7 +27,7 @@ import {
 import { ActivityBar, BranchIcon, DatabaseIcon, DiagramIcon, GearIcon, HistoryIcon, ResultsIcon } from "./ActivityBar";
 import { AiPanel, FixTarget, useAi } from "./AiPanel";
 import { ContextMenu } from "./ContextMenu";
-import { AI_ENABLED } from "./features";
+import { AI_ENABLED, capabilities } from "./features";
 import { EnvironmentBadge } from "./ConnectionForm";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
@@ -38,6 +40,7 @@ import { DiscardChanges, ResultView, SaveTarget, StatementLine, resultCount } fr
 import { NO_CHANGES, PendingRows, changeCount } from "./rowEdits";
 import { PlanView } from "./PlanView";
 import { RiskDialog, RiskyStatement } from "./RiskDialog";
+import { RedisTree } from "./RedisTree";
 import { SchemaTree } from "./SchemaTree";
 import { SettingsDialog } from "./SettingsDialog";
 import { SnapshotPanel } from "./SnapshotPanel";
@@ -47,7 +50,15 @@ import { quoteIdent, statementTable } from "./sqlIdent";
 import type { Messages } from "./i18n/en";
 import { useT } from "./settings";
 
-const INITIAL_SQL = "SELECT version();\n";
+/** What a new connection's first tab starts with, in its engine's language. */
+const INITIAL_TEXT: Record<Engine, string> = {
+  postgres: "SELECT version();\n",
+  mysql: "SELECT VERSION();\n",
+  mariadb: "SELECT VERSION();\n",
+  redis: "INFO server\n",
+  mongodb: "show collections\n",
+  documentdb: "show collections\n",
+};
 
 // The ERD brings a diagram library, so it loads when first opened.
 const ErdView = lazy(() => import("./ErdView").then((module) => ({ default: module.ErdView })));
@@ -106,6 +117,8 @@ interface Props {
 
 export function QueryPanel({ session, connection, onConnectionChange, onDisconnect }: Props) {
   const t = useT();
+  const engine = session.engine;
+  const caps = capabilities(engine);
   // For callbacks that must not rerun when only the language changes.
   const tRef = useRef(t);
   useEffect(() => {
@@ -166,6 +179,8 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   const [introspection, setIntrospection] = useState<Introspection | null>(null);
   const [loadingSchema, setLoadingSchema] = useState(false);
   const runCount = useRef(0);
+  // Bumped after each run, so Redis's key list reads the keys a command may have changed.
+  const [runsDone, setRunsDone] = useState(0);
   const { conversation, ask, stop: stopAi, clear: clearAi } = useAi(session.id);
   const [aiPrompting, setAiPrompting] = useState(false);
   const { layout, update: updateLayout, toggle: togglePanel } = useLayout();
@@ -179,7 +194,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       .loadEditor(editorKey)
       .catch(() => null)
       .then((saved) => {
-        const restored = savedTabs(saved, tRef.current);
+        const restored = savedTabs(saved, tRef.current, INITIAL_TEXT[engine]);
         const made = restored.tabs.map(
           (tab, i): SqlTab => ({
             id: i + 1,
@@ -406,7 +421,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
   const [snapshotOpen, setSnapshotOpen] = useState(false);
 
   const refreshSnapshot = useCallback(() => {
-    if (!snapshotDir) return;
+    if (!snapshotDir || !caps.postgresOnly) return;
     setCheckingSnapshot(true);
     snapshots
       .status(session.id, snapshotDir)
@@ -511,7 +526,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     if (!(await mayReplaceResults(tab))) return view.focus();
     const sql = view.state.doc.toString();
     const { from, to } = view.state.selection.main;
-    const ranges = await statementsToRun(sql, from, to);
+    const ranges = await statementsToRun(sql, from, to, engine);
     if (ranges.length === 0) return;
 
     updateTab(tabId, () => ({ running: true }));
@@ -531,8 +546,8 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       };
     }
     // Ask before statements that change every row or drop something. A
-    // read-only session refuses them anyway.
-    if (sessionId !== null && !readOnlyRef.current) {
+    // read-only session refuses them anyway. Only PostgreSQL's are checked so far.
+    if (sessionId !== null && !readOnlyRef.current && caps.postgresOnly) {
       const statements = ranges.map((range) => sql.slice(range.start, range.end));
       let proceed = false;
       try {
@@ -578,6 +593,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       elapsedMs: performance.now() - started,
     };
     updateTab(tabId, () => ({ running: false, outcome: finished, plan: null }));
+    if (!caps.schemaTree) setRunsDone((n) => n + 1);
     // The statements may have changed the search path.
     if (sessionId !== null) {
       pg.currentSchema(sessionId)
@@ -606,7 +622,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     if (!statement) {
       const sql = view.state.doc.toString();
       const { from, to } = view.state.selection.main;
-      const [range] = await statementsToRun(sql, from, to);
+      const [range] = await statementsToRun(sql, from, to, engine);
       if (!range) return;
       statement = { statement: sql.slice(range.start, range.end), start: range.start, end: range.end };
     }
@@ -637,7 +653,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
 
   function showDdl(schema: string, object: SchemaObject) {
     snapshots
-      .createStatement(schema, object)
+      .createStatementIn(session.id, schema, object)
       .then((ddl) => insertStatement(ddl.trimEnd(), false))
       .catch((error) => console.error("generating DDL failed", error));
   }
@@ -665,7 +681,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
     const sql = view.state.doc.toString();
     const { from, to } = view.state.selection.main;
     if (from !== to) return sql.slice(from, to);
-    const range = await sqlText.statementAt(sql, from);
+    const range = await sqlText.statementAt(sql, from, engine);
     return range ? sql.slice(range.start, range.end) : null;
   }
 
@@ -810,10 +826,12 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
             {t.workspace.run}
           </button>
         )}
-        <button onClick={() => explain(false)} disabled={!hasText || running} title={t.plan.buttonTitle}>
-          {t.plan.button}
-        </button>
-        {AI_ENABLED && (
+        {caps.postgresOnly && (
+          <button onClick={() => explain(false)} disabled={!hasText || running} title={t.plan.buttonTitle}>
+            {t.plan.button}
+          </button>
+        )}
+        {AI_ENABLED && caps.postgresOnly && (
           <button onClick={() => setAiPrompting(true)} title={t.ai.buttonTitle}>
             {t.ai.button}
           </button>
@@ -825,7 +843,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
           y={connectionMenu.y}
           items={[
             { note: session.address },
-            { note: `PostgreSQL ${session.serverVersion}` },
+            { note: `${ENGINE_NAMES[engine]} ${session.serverVersion}` },
             { separator: true },
             { label: t.workspace.disconnect, onSelect: disconnect },
           ]}
@@ -853,26 +871,34 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
               pressed: historyOpen,
               onClick: () => setHistoryOpen(true),
             },
-            {
-              key: "erd",
-              label: t.workspace.erd,
-              title: t.workspace.erdTip,
-              icon: <DiagramIcon />,
-              pressed: erd !== null,
-              disabled: !introspection,
-              onClick: () => setErd({ schema: introspection?.defaultSchema ?? null, focus: null }),
-            },
-            {
-              key: "snapshot",
-              label: t.workspace.snapshot,
-              title: snapshotStatus
-                ? `${t.workspace.snapshot} · ${t.workspace.snapshotChanges(snapshotStatus.changes.length)}`
-                : t.workspace.snapshot,
-              icon: <BranchIcon />,
-              pressed: snapshotOpen,
-              badge: snapshotStatus?.changes.length,
-              onClick: () => setSnapshotOpen(true),
-            },
+            ...(caps.erd
+              ? [
+                  {
+                    key: "erd",
+                    label: t.workspace.erd,
+                    title: t.workspace.erdTip,
+                    icon: <DiagramIcon />,
+                    pressed: erd !== null,
+                    disabled: !introspection,
+                    onClick: () => setErd({ schema: introspection?.defaultSchema ?? null, focus: null }),
+                  },
+                ]
+              : []),
+            ...(caps.postgresOnly
+              ? [
+                  {
+                    key: "snapshot",
+                    label: t.workspace.snapshot,
+                    title: snapshotStatus
+                      ? `${t.workspace.snapshot} · ${t.workspace.snapshotChanges(snapshotStatus.changes.length)}`
+                      : t.workspace.snapshot,
+                    icon: <BranchIcon />,
+                    pressed: snapshotOpen,
+                    badge: snapshotStatus?.changes.length,
+                    onClick: () => setSnapshotOpen(true),
+                  },
+                ]
+              : []),
           ]}
           bottom={[
             {
@@ -892,29 +918,39 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
         />
         {layout.treeVisible && (
           <>
-            <SchemaTree
-              introspection={introspection}
-              loading={loadingSchema}
-              actions={{
-                insert: insertStatement,
-                refresh: refreshSchema,
-                showDdl,
-                showDetail: setDetail,
-                showErd: (schema, focus) => setErd({ schema, focus }),
-                create: (schema, type) => setCreating({ schema, type }),
-                exportData: (schema, relation) =>
-                  setTransfer({
-                    kind: "export",
-                    sessionId: session.id,
-                    source: { kind: "table", schema, name: relation },
-                    label: `${schema}.${relation}`,
-                    fileName: relation,
-                    insertTable: `${quoteIdent(schema)}.${quoteIdent(relation)}`,
-                  }),
-                importData: (schema, table) => setTransfer({ kind: "import", schema, table }),
-              }}
-              width={layout.treeWidth}
-            />
+            {!caps.schemaTree ? (
+              <RedisTree
+                sessionId={() => sessionOf(activeIdRef.current)}
+                scope={`${activeId}/${active?.schema ?? ""}/${runsDone}`}
+                insert={insertStatement}
+                width={layout.treeWidth}
+              />
+            ) : (
+              <SchemaTree
+                engine={engine}
+                introspection={introspection}
+                loading={loadingSchema}
+                actions={{
+                  insert: insertStatement,
+                  refresh: refreshSchema,
+                  showDdl,
+                  showDetail: setDetail,
+                  showErd: (schema, focus) => setErd({ schema, focus }),
+                  create: (schema, type) => setCreating({ schema, type }),
+                  exportData: (schema, relation) =>
+                    setTransfer({
+                      kind: "export",
+                      sessionId: session.id,
+                      source: { kind: "table", schema, name: relation },
+                      label: `${schema}.${relation}`,
+                      fileName: relation,
+                      insertTable: `${quoteIdent(schema)}.${quoteIdent(relation)}`,
+                    }),
+                  importData: (schema, table) => setTransfer({ kind: "import", schema, table }),
+                }}
+                width={layout.treeWidth}
+              />
+            )}
             <Splitter
               orientation="vertical"
               size={layout.treeWidth}
@@ -953,8 +989,9 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                 initialValue={tab.initialSql}
                 introspection={introspection}
                 onRun={run}
-                onAsk={AI_ENABLED ? () => setAiPrompting(true) : undefined}
-                onExplain={explain}
+                onAsk={AI_ENABLED && caps.postgresOnly ? () => setAiPrompting(true) : undefined}
+                onExplain={caps.postgresOnly ? explain : undefined}
+                engine={engine}
                 onChange={(value) => editorChanged(tab.id, value)}
                 viewRef={editorRef(tab.id)}
                 height={layout.resultsVisible ? layout.editorHeight : null}
@@ -1009,7 +1046,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
                   }
                   onChange={(index, change) => changeResult(active!.id, outcome.runId, index, change)}
                   onReveal={revealStatement}
-                  onExport={exportResult}
+                  onExport={caps.postgresOnly ? exportResult : undefined}
                   onFix={AI_ENABLED ? fixWithAi : undefined}
                 />
               )}
@@ -1072,6 +1109,7 @@ export function QueryPanel({ session, connection, onConnectionChange, onDisconne
       {detail && introspection && (
         <DetailPanel
           sessionId={session.id}
+          engine={engine}
           introspection={introspection}
           target={detail}
           onNavigate={setDetail}
@@ -1223,7 +1261,7 @@ interface SavedTabs {
 }
 
 /** The tabs saved for a connection: this version's JSON, or the text of the single editor before tabs. */
-function savedTabs(saved: string | null, t: Messages): SavedTabs {
+function savedTabs(saved: string | null, t: Messages, initialText: string): SavedTabs {
   if (saved?.startsWith("{")) {
     try {
       const parsed = JSON.parse(saved) as { active?: unknown; tabs?: unknown };
@@ -1241,7 +1279,7 @@ function savedTabs(saved: string | null, t: Messages): SavedTabs {
       // Text that only looks like JSON: an editor's text from before tabs.
     }
   }
-  return { active: 0, tabs: [{ title: t.tabs.console(1), sql: saved ?? INITIAL_SQL, schema: null }] };
+  return { active: 0, tabs: [{ title: t.tabs.console(1), sql: saved ?? initialText, schema: null }] };
 }
 
 /** Whether running the statement may change data, judged by how it starts. */
@@ -1255,12 +1293,12 @@ function changesData(statement: string) {
 }
 
 /** The selected statements, or the statement at the cursor when nothing is selected. */
-async function statementsToRun(sql: string, selectionStart: number, selectionEnd: number) {
+async function statementsToRun(sql: string, selectionStart: number, selectionEnd: number, engine: Engine) {
   if (selectionStart === selectionEnd) {
-    const range = await sqlText.statementAt(sql, selectionStart);
+    const range = await sqlText.statementAt(sql, selectionStart, engine);
     return range ? [range] : [];
   }
-  const ranges = await sqlText.split(sql.slice(selectionStart, selectionEnd));
+  const ranges = await sqlText.split(sql.slice(selectionStart, selectionEnd), engine);
   return ranges.map(
     (range): TextRange => ({ start: range.start + selectionStart, end: range.end + selectionStart }),
   );
@@ -1283,7 +1321,7 @@ function RunResults({
   target: SaveTarget | null;
   onChange: (index: number, change: { result?: StatementResult; pending?: PendingRows }) => void;
   onReveal: (statement: FixTarget) => void;
-  onExport: (statement: string) => void;
+  onExport?: (statement: string) => void;
   onFix?: (failure: NonNullable<Outcome["failure"]>) => void;
 }) {
   const t = useT();
@@ -1359,7 +1397,7 @@ function RunResults({
           target={target}
           onChange={(change) => onChange(selected, change)}
           onReveal={() => onReveal(shown.statement)}
-          onExport={() => onExport(shown.statement.statement)}
+          onExport={onExport && (() => onExport(shown.statement.statement))}
         />
       ) : (
         failure && (

@@ -8,6 +8,7 @@ import {
   Introspection,
   ObjectEdit,
   ObjectRef,
+  Engine,
   Plan,
   SchemaObject,
   SqlFunction,
@@ -19,6 +20,7 @@ import {
   snapshots,
 } from "./api";
 import { blockerText } from "./ApplyDialog";
+import { Capabilities, capabilities } from "./features";
 import type { Messages } from "./i18n/en";
 import { useT } from "./settings";
 import { Splitter } from "./Splitter";
@@ -26,6 +28,7 @@ import { primaryKeyColumns, quoteIdent, splitNames } from "./sqlIdent";
 
 interface Props {
   sessionId: number;
+  engine: Engine;
   introspection: Introspection;
   target: ObjectRef;
   onNavigate: (target: ObjectRef) => void;
@@ -52,6 +55,7 @@ type Found =
 export function DetailPanel(props: Props) {
   const { introspection, target, onClose, width, onResize, onResetWidth } = props;
   const t = useT();
+  const caps = capabilities(props.engine);
   const [tab, setTab] = useState<"detail" | "ddl">("detail");
   const [editing, setEditing] = useState(false);
   const found = useMemo(() => find(introspection, target), [introspection, target]);
@@ -76,7 +80,7 @@ export function DetailPanel(props: Props) {
           </strong>
           {found && !editing && (
             <div className="tabs" role="tablist">
-              {(["detail", "ddl"] as const).map((name) => (
+              {(caps.ddl ? (["detail", "ddl"] as const) : (["detail"] as const)).map((name) => (
                 <button
                   key={name}
                   role="tab"
@@ -90,10 +94,10 @@ export function DetailPanel(props: Props) {
             </div>
           )}
           <span className="spacer" />
-          {found?.type === "table" && !editing && (
+          {found?.type === "table" && !editing && caps.erd && (
             <button onClick={() => props.onShowErd(found.schema, found.table.name)}>{t.detail.erd}</button>
           )}
-          {found && !editing && (
+          {found && !editing && caps.postgresOnly && (
             <button
               onClick={() => {
                 setTab("detail");
@@ -121,7 +125,7 @@ export function DetailPanel(props: Props) {
             onCancel={() => setEditing(false)}
           />
         ) : tab === "ddl" ? (
-          <DdlTab found={found} onInsert={props.onInsert} />
+          <DdlTab sessionId={props.sessionId} found={found} onInsert={props.onInsert} />
         ) : (
           <div className="detail-body">
             {found.type === "table" && (
@@ -135,6 +139,7 @@ export function DetailPanel(props: Props) {
                 )}
                 foreignKeys={introspection.foreignKeys}
                 onNavigate={props.onNavigate}
+                caps={caps}
               />
             )}
             {found.type === "view" && <ViewDetail view={found.view} />}
@@ -321,6 +326,7 @@ function TableDetail({
   partitions,
   foreignKeys,
   onNavigate,
+  caps,
 }: {
   schema: string;
   table: Table;
@@ -328,6 +334,8 @@ function TableDetail({
   partitions: { schema: string; table: Table }[];
   foreignKeys: ForeignKey[];
   onNavigate: (target: ObjectRef) => void;
+  /** MySQL has no privileges or row security in the model; MongoDB's collections have no keys. */
+  caps: Capabilities;
 }) {
   const t = useT();
   const primaryKey = primaryKeyColumns(table);
@@ -412,61 +420,67 @@ function TableDetail({
         </table>
       </Section>
 
-      <Section title={t.detail.relationships}>
-        {outgoing.length === 0 && incoming.length === 0 && <p className="muted">{t.detail.noRelationships}</p>}
-        {outgoing.length > 0 && (
-          <>
-            <h4>{t.detail.references}</h4>
-            <ul className="relationships">
-              {outgoing.map((fk) => (
-                <li key={fk.name}>
-                  <code>({fk.columns.join(", ")})</code> → {link(fk.referencedSchema, fk.referencedTable)}{" "}
-                  <code>({fk.referencedColumns.join(", ")})</code>
-                  <span className="muted">
-                    {fk.name}
-                    {actionsText(fk, t)}
-                  </span>
+      {caps.sql && (
+        <Section title={t.detail.relationships}>
+          {outgoing.length === 0 && incoming.length === 0 && <p className="muted">{t.detail.noRelationships}</p>}
+          {outgoing.length > 0 && (
+            <>
+              <h4>{t.detail.references}</h4>
+              <ul className="relationships">
+                {outgoing.map((fk) => (
+                  <li key={fk.name}>
+                    <code>({fk.columns.join(", ")})</code> → {link(fk.referencedSchema, fk.referencedTable)}{" "}
+                    <code>({fk.referencedColumns.join(", ")})</code>
+                    <span className="muted">
+                      {fk.name}
+                      {actionsText(fk, t)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {incoming.length > 0 && (
+            <>
+              <h4>{t.detail.referencedBy}</h4>
+              <ul className="relationships">
+                {incoming.map((fk) => (
+                  <li key={`${fk.schema}.${fk.table}.${fk.name}`}>
+                    {link(fk.schema, fk.table)} <code>({fk.columns.join(", ")})</code> →{" "}
+                    <code>({fk.referencedColumns.join(", ")})</code>
+                    <span className="muted">
+                      {fk.name}
+                      {actionsText(fk, t)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Section>
+
+      )}
+
+      {caps.sql && (
+        <Section title={`${t.detail.constraints} (${table.constraints.length})`}>
+          {table.constraints.length === 0 ? (
+            <p className="muted">{t.detail.none}</p>
+          ) : (
+            <ul className="definitions">
+              {table.constraints.map((constraint) => (
+                <li key={constraint.name}>
+                  <span className="mono">{constraint.name}</span>
+                  <code>{constraint.definition}</code>
                 </li>
               ))}
             </ul>
-          </>
-        )}
-        {incoming.length > 0 && (
-          <>
-            <h4>{t.detail.referencedBy}</h4>
-            <ul className="relationships">
-              {incoming.map((fk) => (
-                <li key={`${fk.schema}.${fk.table}.${fk.name}`}>
-                  {link(fk.schema, fk.table)} <code>({fk.columns.join(", ")})</code> →{" "}
-                  <code>({fk.referencedColumns.join(", ")})</code>
-                  <span className="muted">
-                    {fk.name}
-                    {actionsText(fk, t)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </Section>
+          )}
+        </Section>
 
-      <Section title={`${t.detail.constraints} (${table.constraints.length})`}>
-        {table.constraints.length === 0 ? (
-          <p className="muted">{t.detail.none}</p>
-        ) : (
-          <ul className="definitions">
-            {table.constraints.map((constraint) => (
-              <li key={constraint.name}>
-                <span className="mono">{constraint.name}</span>
-                <code>{constraint.definition}</code>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+      )}
 
-      <Grants grants={table.grants ?? []} />
-      <RowSecurity table={table} />
+      {caps.postgresOnly && <Grants grants={table.grants ?? []} />}
+      {caps.postgresOnly && <RowSecurity table={table} />}
 
       <Section title={`${t.detail.indexes} (${table.indexes.length})`}>
         {table.indexes.length === 0 ? (
@@ -483,7 +497,7 @@ function TableDetail({
         )}
       </Section>
 
-      <Triggers triggers={table.triggers ?? []} />
+      {caps.sql && <Triggers triggers={table.triggers ?? []} />}
     </>
   );
 }
@@ -632,7 +646,7 @@ function FunctionDetail({ fn }: { fn: SqlFunction }) {
   );
 }
 
-function DdlTab({ found, onInsert }: { found: Found; onInsert: (sql: string) => void }) {
+function DdlTab({ sessionId, found, onInsert }: { sessionId: number; found: Found; onInsert: (sql: string) => void }) {
   const t = useT();
   const [ddl, setDdl] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -642,10 +656,10 @@ function DdlTab({ found, onInsert }: { found: Found; onInsert: (sql: string) => 
     setDdl(null);
     setError(null);
     snapshots
-      .createStatement(found.schema, schemaObject(found))
+      .createStatementIn(sessionId, found.schema, schemaObject(found))
       .then((text) => setDdl(text.trimEnd()))
       .catch(setError);
-  }, [found]);
+  }, [sessionId, found]);
 
   async function copy() {
     if (!ddl) return;

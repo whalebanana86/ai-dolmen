@@ -8,9 +8,9 @@
   <a href="https://github.com/whalebanana86/ai-dolmen/releases/latest"><b>⬇︎ 내려받기 (macOS · Windows · Linux)</b></a>
 </p>
 
-PostgreSQL 데이터베이스에 연결해 SQL을 실행하고, 결과를 표에서 바로 고치고,
-**테이블 구조가 바뀔 때마다 Git에 기록**하는 오픈소스 데스크톱 앱이에요. 아직 초기
-버전이고, 지금은 PostgreSQL만 연결할 수 있어요.
+PostgreSQL·MySQL·MariaDB·Redis·MongoDB에 연결해 쿼리를 실행하고, 결과를 표에서 바로
+고치고, **테이블 구조가 바뀔 때마다 Git에 기록**하는 오픈소스 데스크톱 앱이에요. 아직 초기
+버전이고, Git 기록·실행 계획·결과 편집은 지금은 PostgreSQL에서만 돼요.
 
 ## 이 앱은 뭐예요?
 
@@ -237,11 +237,15 @@ Windows·Linux에서는 `⌘` 대신 `Ctrl`이에요.
 
 ## 지원하는 데이터베이스
 
-| 데이터베이스 | 상태 |
+| 데이터베이스 | 되는 것 |
 |---|---|
-| PostgreSQL | 지원 (v0.1) |
-| MySQL, MariaDB | 계획 (v0.2) |
-| Redis, Valkey | 계획 (v0.3) |
+| PostgreSQL | 전부: 실행, 구조 트리·상세·ERD, 결과 편집, 실행 계획, 스냅샷·Git, 가져오기·내보내기 |
+| MySQL, MariaDB | 실행, 구조 트리·상세·ERD, `SHOW CREATE`로 DDL 보기, 읽기 전용, 실행 취소 |
+| Redis, Valkey | 명령 실행(한 줄에 하나), `:`로 묶은 키 탐색, DB 번호 전환, 읽기 전용(쓰기 명령 거부) |
+| MongoDB, DocumentDB | mongosh 문법(`db.x.find(...)`, `aggregate`, `insertOne` 등), 데이터베이스·컬렉션 트리(문서를 훑어 본 필드), 읽기 전용 |
+
+연결 화면의 **종류**에서 고르면 기본 포트·사용자가 따라 바뀌어요. AWS DocumentDB는 TLS가
+필수라, Amazon RDS 인증서를 이 컴퓨터가 신뢰하지 않으면 SSL 모드를 **필수**로 고르세요.
 
 ## 내 데이터는 안전해요?
 
@@ -273,6 +277,7 @@ Windows·Linux에서는 `⌘` 대신 `Ctrl`이에요.
 |---|---|
 | 앱 | Tauri 2 (Rust) + React 19 + TypeScript, 편집기는 CodeMirror 6 |
 | 데이터베이스 | tokio-postgres. 편집기 탭마다 전용 연결을 쓰고, 구조 읽기와 스키마 적용은 별도 연결(`search_path=pg_catalog`)에서 한다. 값은 PostgreSQL의 텍스트 형식 그대로 보여 준다(bigint·numeric 정밀도 손실 없음) |
+| 다른 엔진 | MySQL·MariaDB는 mysql_async(텍스트 프로토콜, `information_schema`를 PostgreSQL과 같은 모델로 읽는다), Redis는 redis 크레이트(RESP3, 안 되면 RESP2), MongoDB·DocumentDB는 공식 mongodb 드라이버와 자체 mongosh 문법 해석기 |
 | 결과 편집 | 문장을 다시 prepare해 열마다 원본 테이블·컬럼 번호를 얻는다. 저장은 기본 키로 행을 찾고, 바꾼 칸을 `format('%s', …)`로 읽은 값과 비교해 낙관적으로 잠근다. 열린 트랜잭션 안이면 savepoint로 합친다 |
 | 스키마 스냅샷 | 객체마다 DDL 파일 + `dolmen-model.json`. 적용 계획은 모델끼리 비교해 만들고 한 트랜잭션으로 실행한다 |
 | 저장 | 연결 목록은 앱 설정 폴더의 JSON, 비밀번호는 OS 키체인(keyring), 히스토리와 편집기 탭은 SQLite |
@@ -321,7 +326,16 @@ docker compose up -d   # localhost:55432에 PostgreSQL 18, 사용자·비밀번�
 DOLMEN_TEST_PG_HOST=localhost DOLMEN_TEST_PG_PORT=55432 cargo test
 ```
 
-`DOLMEN_TEST_PG_HOST`가 없으면 서버가 필요한 테스트는 건너뛴다.
+`DOLMEN_TEST_PG_HOST`가 없으면 서버가 필요한 테스트는 건너뛴다. 다른 엔진도 같은 식이다.
+
+```sh
+docker run -d --rm -e MYSQL_ROOT_PASSWORD=mysql -p 53306:3306 mysql:8.4
+DOLMEN_TEST_MYSQL_HOST=127.0.0.1 DOLMEN_TEST_MYSQL_PORT=53306 DOLMEN_TEST_MYSQL_PASSWORD=mysql cargo test -p dolmen-core --test mysql
+docker run -d --rm -p 56379:6379 redis:8
+DOLMEN_TEST_REDIS_HOST=localhost DOLMEN_TEST_REDIS_PORT=56379 cargo test -p dolmen-core --test redis
+docker run -d --rm -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=example -p 57017:27017 mongo:8
+DOLMEN_TEST_MONGO_HOST=localhost DOLMEN_TEST_MONGO_PORT=57017 cargo test -p dolmen-core --test mongo
+```
 
 ### 릴리스
 

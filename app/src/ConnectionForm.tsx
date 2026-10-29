@@ -1,6 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
+  DEFAULT_PORTS,
+  ENGINES,
+  ENGINE_NAMES,
   ENVIRONMENTS,
+  Engine,
   Environment,
   PasswordChange,
   SavedConnection,
@@ -23,6 +27,7 @@ type Draft = Omit<SavedConnection, "port"> & { port: string };
 const NEW_CONNECTION: Draft = {
   id: "",
   name: "",
+  engine: "postgres",
   host: "localhost",
   port: "5432",
   user: "postgres",
@@ -42,7 +47,22 @@ function toDraft(connection: SavedConnection): Draft {
 }
 
 function defaultName(draft: Draft) {
-  return `${draft.database} @ ${draft.host}`;
+  return `${draft.database || ENGINE_NAMES[draft.engine]} @ ${draft.host}`;
+}
+
+/** The user and database a new connection to the engine starts with. */
+const ENGINE_DEFAULTS: Record<Engine, { user: string; database: string }> = {
+  postgres: { user: "postgres", database: "postgres" },
+  mysql: { user: "root", database: "" },
+  mariadb: { user: "root", database: "" },
+  redis: { user: "", database: "0" },
+  mongodb: { user: "", database: "" },
+  documentdb: { user: "", database: "" },
+};
+
+/** Whether the engine needs a user and a database to connect. */
+function requires(engine: Engine) {
+  return { user: engine === "postgres" || engine === "mysql" || engine === "mariadb", database: engine === "postgres" };
 }
 
 interface Props {
@@ -75,6 +95,22 @@ export function ConnectionForm({ onConnected }: Props) {
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
   }
+
+  // Fields still at the old engine's defaults take the new one's.
+  function changeEngine(engine: Engine) {
+    setDraft((current) => {
+      const before = ENGINE_DEFAULTS[current.engine];
+      const after = ENGINE_DEFAULTS[engine];
+      return {
+        ...current,
+        engine,
+        port: current.port === String(DEFAULT_PORTS[current.engine]) ? String(DEFAULT_PORTS[engine]) : current.port,
+        user: current.user === before.user ? after.user : current.user,
+        database: current.database === before.database ? after.database : current.database,
+      };
+    });
+  }
+  const required = requires(draft.engine);
 
   // A new connection checks the server's certificate unless the server is on
   // this machine, until the user picks an SSL mode.
@@ -115,6 +151,7 @@ export function ConnectionForm({ onConnected }: Props) {
           password: typedPassword || null,
         },
         target.id || null,
+        target.engine,
       );
       onConnected(session, saved.find((connection) => connection.id === target.id) ?? null);
     } catch (err) {
@@ -197,7 +234,9 @@ export function ConnectionForm({ onConnected }: Props) {
                 {connection.name}
               </span>
               <span className="muted">
-                {connection.user}@{connection.host}:{connection.port}/{connection.database}
+                {ENGINE_NAMES[connection.engine]} · {connection.user ? `${connection.user}@` : ""}
+                {connection.host}:{connection.port}
+                {connection.database ? `/${connection.database}` : ""}
               </span>
             </button>
           ))}
@@ -229,6 +268,16 @@ export function ConnectionForm({ onConnected }: Props) {
               </select>
             </label>
           </div>
+          <label className="field">
+            {t.connect.engine}
+            <select value={draft.engine} onChange={(e) => changeEngine(e.target.value as Engine)}>
+              {ENGINES.map((engine) => (
+                <option key={engine} value={engine}>
+                  {ENGINE_NAMES[engine]}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="field-row">
             <label className="field grow">
               {t.connect.host}
@@ -247,17 +296,25 @@ export function ConnectionForm({ onConnected }: Props) {
             </label>
           </div>
           <label className="field">
-            {t.connect.database}
+            {draft.engine === "redis" ? t.connect.redisDatabase : t.connect.database}
             <input
               value={draft.database}
+              type={draft.engine === "redis" ? "number" : "text"}
+              min={0}
+              placeholder={required.database ? "" : t.connect.optional}
               onChange={(e) => update("database", e.target.value)}
-              required
+              required={required.database}
             />
           </label>
           <div className="field-row">
             <label className="field grow">
               {t.connect.user}
-              <input value={draft.user} onChange={(e) => update("user", e.target.value)} required />
+              <input
+                value={draft.user}
+                placeholder={required.user ? "" : t.connect.optional}
+                onChange={(e) => update("user", e.target.value)}
+                required={required.user}
+              />
             </label>
             <label className="field grow">
               {t.connect.password}
@@ -294,6 +351,7 @@ export function ConnectionForm({ onConnected }: Props) {
             {t.connect.savePassword}
           </label>
           {weakSsl && <p className="error-text ssl-warning">{weakSsl}</p>}
+          {draft.engine === "documentdb" && <p className="muted">{t.connect.documentDbTls}</p>}
           <label className="checkbox" title={t.connect.readOnlyTitle}>
             <input
               type="checkbox"
@@ -302,14 +360,16 @@ export function ConnectionForm({ onConnected }: Props) {
             />
             {t.connect.readOnly}
           </label>
-          <label className="checkbox" title={t.connect.allowSnapshotApplyTitle}>
-            <input
-              type="checkbox"
-              checked={draft.allowSnapshotApply ?? (isLocalHost(draft.host) && !production)}
-              onChange={(e) => setDraft({ ...draft, allowSnapshotApply: e.target.checked })}
-            />
-            {t.connect.allowSnapshotApply}
-          </label>
+          {draft.engine === "postgres" && (
+            <label className="checkbox" title={t.connect.allowSnapshotApplyTitle}>
+              <input
+                type="checkbox"
+                checked={draft.allowSnapshotApply ?? (isLocalHost(draft.host) && !production)}
+                onChange={(e) => setDraft({ ...draft, allowSnapshotApply: e.target.checked })}
+              />
+              {t.connect.allowSnapshotApply}
+            </label>
+          )}
           <label className="checkbox" title={t.connect.recordHistoryTitle}>
             <input
               type="checkbox"

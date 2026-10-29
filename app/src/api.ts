@@ -5,6 +5,26 @@ import type { Messages } from "./i18n/en";
 
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
 
+/** The kind of server a connection is for. */
+export type Engine = "postgres" | "mysql" | "mariadb" | "redis" | "mongodb" | "documentdb";
+export const ENGINES: Engine[] = ["postgres", "mysql", "mariadb", "redis", "mongodb", "documentdb"];
+export const ENGINE_NAMES: Record<Engine, string> = {
+  postgres: "PostgreSQL",
+  mysql: "MySQL",
+  mariadb: "MariaDB",
+  redis: "Redis",
+  mongodb: "MongoDB",
+  documentdb: "DocumentDB",
+};
+export const DEFAULT_PORTS: Record<Engine, number> = {
+  postgres: 5432,
+  mysql: 3306,
+  mariadb: 3306,
+  redis: 6379,
+  mongodb: 27017,
+  documentdb: 27017,
+};
+
 export interface ConnectConfig {
   host: string;
   port: number;
@@ -16,6 +36,7 @@ export interface ConnectConfig {
 
 export interface SessionInfo {
   id: number;
+  engine: Engine;
   serverVersion: string;
   database: string;
   /** The saved connection it came from, if any. */
@@ -338,7 +359,10 @@ export type Refusal =
   | "noColumns"
   | "developmentBuild"
   | "tableChanged"
-  | "rowChanged";
+  | "rowChanged"
+  | "notSupported"
+  /** A command the connection can't run, such as Redis SELECT; the message says what to do instead. */
+  | "unsupported";
 
 /** Why asking the AI failed. */
 export type AiFailure =
@@ -408,23 +432,28 @@ export const updates = {
   },
 };
 
+/** Sessions on any engine; `explain` and the rest after it are PostgreSQL's alone. */
 export const pg = {
   /** Without a password in `config`, the stored password of `savedId` is used. */
-  connect: (config: ConnectConfig, savedId: string | null = null) =>
-    invoke<SessionInfo>("pg_connect", { config, savedId }),
+  connect: (config: ConnectConfig, savedId: string | null = null, engine: Engine = "postgres") =>
+    invoke<SessionInfo>("db_connect", { engine, config, savedId }),
+  /** Statements in the session's language: SQL, Redis commands or mongosh statements. */
   execute: (sessionId: number, sql: string) =>
-    invoke<StatementResult[]>("pg_execute", { sessionId, sql }),
-  introspect: (sessionId: number) => invoke<Introspection>("pg_introspect", { sessionId }),
-  cancel: (sessionId: number) => invoke<void>("pg_cancel", { sessionId }),
-  disconnect: (sessionId: number) => invoke<void>("pg_disconnect", { sessionId }),
+    invoke<StatementResult[]>("db_execute", { sessionId, sql }),
+  introspect: (sessionId: number) => invoke<Introspection>("db_introspect", { sessionId }),
+  cancel: (sessionId: number) => invoke<void>("db_cancel", { sessionId }),
+  disconnect: (sessionId: number) => invoke<void>("db_disconnect", { sessionId }),
   /** Another session to the same database, for an editor tab of its own. */
-  fork: (sessionId: number) => invoke<SessionInfo>("pg_fork", { sessionId }),
-  /** Makes the session's unqualified names resolve in `schema` alone; returns where they now do. */
-  setSchema: (sessionId: number, schema: string) => invoke<string | null>("pg_set_schema", { sessionId, schema }),
+  fork: (sessionId: number) => invoke<SessionInfo>("db_fork", { sessionId }),
+  /**
+   * Makes the session's unqualified names resolve in `schema` alone (MySQL's
+   * and MongoDB's current database, Redis's database number); returns where they now do.
+   */
+  setSchema: (sessionId: number, schema: string) => invoke<string | null>("db_set_schema", { sessionId, schema }),
   /** The schema the session's unqualified names resolve in first. */
-  currentSchema: (sessionId: number) => invoke<string | null>("pg_current_schema", { sessionId }),
+  currentSchema: (sessionId: number) => invoke<string | null>("db_current_schema", { sessionId }),
   /** Makes the session and every tab's session of its connection read-only, or lets them write. */
-  setReadOnly: (sessionId: number, readOnly: boolean) => invoke<void>("pg_set_read_only", { sessionId, readOnly }),
+  setReadOnly: (sessionId: number, readOnly: boolean) => invoke<void>("db_set_read_only", { sessionId, readOnly }),
   /** The statement's plan; with `analyze`, measured by running it and rolling back. */
   explain: (sessionId: number, statement: string, analyze: boolean) =>
     invoke<ExplainOutput>("pg_explain", { sessionId, statement, analyze }),
@@ -437,11 +466,29 @@ export const pg = {
   previewRows: (changes: RowChanges) => invoke<string[]>("rows_preview", { changes }),
 };
 
+/** A Redis key and its type, as TYPE names it: string, hash, list, set, zset, stream, ReJSON-RL… */
+export interface RedisKey {
+  /** Names that aren't UTF-8 are `\x` and hex. */
+  name: string;
+  kind: string;
+  /** The command that shows its value for its type, such as `HGETALL user:1`. */
+  show: string;
+  /** The name as a command argument, quoted where needed. */
+  quoted: string;
+}
+
+export const redis = {
+  /** Keys matching a SCAN pattern, at most `limit`; `complete` is false when there are more. */
+  keys: (sessionId: number, pattern: string, limit: number) =>
+    invoke<{ keys: RedisKey[]; complete: boolean }>("redis_keys", { sessionId, pattern, limit }),
+};
+
 /** A connection the user saved. Its password, if any, stays in the OS keychain. */
 export interface SavedConnection {
   /** Empty for a connection that has not been saved yet. */
   id: string;
   name: string;
+  engine: Engine;
   host: string;
   port: number;
   user: string;
@@ -596,6 +643,9 @@ export const snapshots = {
   /** The CREATE statement for one object, as written in snapshots. */
   createStatement: (schema: string, object: SchemaObject) =>
     invoke<string>("ddl_create_statement", { schema, object }),
+  /** The CREATE statement for one object, as the session's server writes it (MySQL's SHOW CREATE). */
+  createStatementIn: (sessionId: number, schema: string, object: SchemaObject) =>
+    invoke<string>("db_create_statement", { sessionId, schema, object }),
 };
 
 /** Whether a host is this machine, as the backend judges it: localhost, a loopback address or a socket. */
@@ -772,10 +822,10 @@ export interface TextRange {
 
 export const sqlText = {
   /** The statement to run for a cursor at `cursor`, like DataGrip picks it. */
-  statementAt: (sql: string, cursor: number) =>
-    invoke<TextRange | null>("sql_statement_at", { sql, cursor }),
+  statementAt: (sql: string, cursor: number, engine: Engine = "postgres") =>
+    invoke<TextRange | null>("sql_statement_at", { sql, cursor, engine }),
   /** Every statement in `sql`, ignoring semicolons in strings, comments and `$$` bodies. */
-  split: (sql: string) => invoke<TextRange[]>("sql_split", { sql }),
+  split: (sql: string, engine: Engine = "postgres") => invoke<TextRange[]>("sql_split", { sql, engine }),
 };
 
 export function isAppError(error: unknown): error is AppError {
@@ -789,7 +839,7 @@ export function errorMessage(error: unknown, t: Messages): string {
     case "closed":
       return t.errors.closed;
     case "refused":
-      return t.errors.refused[error.reason] ?? error.message;
+      return (t.errors.refused as Partial<Record<Refusal, string>>)[error.reason] ?? error.message;
     case "ai":
       switch (error.reason) {
         case "other":

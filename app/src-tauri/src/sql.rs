@@ -5,6 +5,7 @@
 
 use std::ops::Range;
 
+use dolmen_core::connections::Engine;
 use serde::Serialize;
 
 /// A range in the editor text, in UTF-16 code units.
@@ -14,17 +15,17 @@ pub struct TextRange {
     end: usize,
 }
 
-/// The statement to run for a cursor at `cursor`.
+/// The statement to run for a cursor at `cursor`, in text for `engine`.
 #[tauri::command]
-pub fn sql_statement_at(sql: String, cursor: usize) -> Option<TextRange> {
-    dolmen_core::sql::statement_at(&sql, byte_offset(&sql, cursor))
+pub fn sql_statement_at(sql: String, cursor: usize, engine: Option<Engine>) -> Option<TextRange> {
+    dolmen_core::sql::statement_at_for(engine.unwrap_or_default(), &sql, byte_offset(&sql, cursor))
         .map(|range| utf16_range(&sql, range))
 }
 
-/// Every statement in `sql`, in order.
+/// Every statement in `sql`, in order, in text for `engine`.
 #[tauri::command]
-pub fn sql_split(sql: String) -> Vec<TextRange> {
-    dolmen_core::sql::split_statements(&sql)
+pub fn sql_split(sql: String, engine: Option<Engine>) -> Vec<TextRange> {
+    dolmen_core::sql::split_for(engine.unwrap_or_default(), &sql)
         .into_iter()
         .map(|range| utf16_range(&sql, range))
         .collect()
@@ -64,14 +65,14 @@ mod tests {
     fn converts_between_utf16_and_byte_offsets() {
         let second = js_index(SQL, "SELECT 2");
         assert_eq!(
-            sql_statement_at(SQL.into(), second + 3),
+            sql_statement_at(SQL.into(), second + 3, None),
             Some(TextRange {
                 start: second,
                 end: second + "SELECT 2;".len()
             })
         );
         assert_eq!(
-            sql_split(SQL.into()),
+            sql_split(SQL.into(), None),
             [
                 TextRange {
                     start: 0,

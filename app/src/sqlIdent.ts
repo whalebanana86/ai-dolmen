@@ -1,4 +1,4 @@
-import type { Table } from "./api";
+import type { Engine, Table } from "./api";
 
 // PostgreSQL's key words that aren't unreserved: names that must be quoted to be used as identifiers.
 const RESERVED = new Set(
@@ -17,6 +17,11 @@ const RESERVED = new Set(
   ).split(" "),
 );
 
+/** Quotes a name for the engine: in backquotes for MySQL and MariaDB, else as PostgreSQL does. */
+export function quoteIdentFor(engine: Engine, name: string) {
+  return engine === "mysql" || engine === "mariadb" ? `\`${name.replace(/`/g, "``")}\`` : quoteIdent(name);
+}
+
 /** Quotes a PostgreSQL identifier unless it is a plain lower-case name. */
 export function quoteIdent(name: string) {
   return /^[a-z_][a-z0-9_$]*$/.test(name) && !RESERVED.has(name)
@@ -31,21 +36,21 @@ export function primaryKeyColumns(table: Table): string[] {
   return splitNames(list);
 }
 
-/** Splits `a, "B c", d` into names, unquoting quoted ones. */
+/** Splits `a, "B c", d` into names, unquoting quoted ones (MySQL's `backquoted` too). */
 export function splitNames(list: string): string[] {
   const names: string[] = [];
   let current = "";
-  let quoted = false;
+  let quote: string | null = null;
   for (let i = 0; i < list.length; i++) {
     const ch = list[i];
-    if (ch === '"') {
-      if (quoted && list[i + 1] === '"') {
-        current += '"';
+    if (ch === quote || (quote === null && (ch === '"' || ch === "`"))) {
+      if (quote && list[i + 1] === quote) {
+        current += quote;
         i++;
       } else {
-        quoted = !quoted;
+        quote = quote ? null : ch;
       }
-    } else if (ch === "," && !quoted) {
+    } else if (ch === "," && quote === null) {
       names.push(current.trim());
       current = "";
     } else {

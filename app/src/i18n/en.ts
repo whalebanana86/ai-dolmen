@@ -34,6 +34,7 @@ export const en = {
       developmentBuild: "A development build can't install updates. Update a Dolmen installed from a release.",
       tableChanged: "The table changed since its rows were read. Run the query again.",
       rowChanged: "A row changed or was deleted since it was read, so nothing was saved.",
+      notSupported: "This isn't available for this kind of database yet.",
     },
     ai: {
       noApiKey: "There's no Anthropic API key yet. Add one in Settings (⚙) to use AI.",
@@ -97,8 +98,13 @@ export const en = {
   },
 
   connect: {
-    subtitle: "PostgreSQL",
+    subtitle: "PostgreSQL · MySQL · MariaDB · Redis · MongoDB · DocumentDB",
     newConnection: "+ New connection",
+    engine: "Kind",
+    redisDatabase: "Database number",
+    optional: "Optional",
+    documentDbTls:
+      "AWS DocumentDB requires TLS. Choose Require unless this computer trusts the Amazon RDS certificate.",
     doubleClickToConnect: "Double-click to connect",
     name: "Name",
     host: "Host",
@@ -263,6 +269,17 @@ export const en = {
       copySignature: "Copy signature",
       copyDefinition: "Copy definition",
       showCurrentValue: "Show current value",
+    },
+    keys: {
+      filter: "Key pattern (e.g. user:*)",
+      reload: "Read the keys again",
+      none: "No keys",
+      more: (n: number) => `Only the first ${n} are shown. Narrow the pattern.`,
+      doubleClickToShow: "Double-click to show the value",
+      showValue: "Show value",
+      showTtl: "Show time to live (TTL)",
+      copyName: "Copy key name",
+      delete: "Delete (DEL)…",
     },
   },
 

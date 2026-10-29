@@ -90,6 +90,11 @@ pub enum Refusal {
     TableChanged,
     /// A row changed or was deleted since it was read, so changes to it weren't saved.
     RowChanged,
+    /// Only PostgreSQL connections can do this so far.
+    NotSupported,
+    /// The command can't run on this connection, such as Redis `SELECT` or
+    /// `MULTI` on a connection the app shares; the message says what to do instead.
+    Unsupported,
 }
 
 impl From<keyring_core::Error> for Error {

@@ -114,6 +114,7 @@ fn saved_connections_use_camel_case() {
     let connection = SavedConnection {
         id: "abc".into(),
         name: "local".into(),
+        engine: dolmen_core::connections::Engine::MariaDb,
         host: "localhost".into(),
         port: 5432,
         user: "postgres".into(),
@@ -136,6 +137,7 @@ fn saved_connections_use_camel_case() {
         json!({
             "id": "abc",
             "name": "local",
+            "engine": "mariadb",
             "host": "localhost",
             "port": 5432,
             "user": "postgres",
@@ -154,6 +156,27 @@ fn saved_connections_use_camel_case() {
         serde_json::from_value::<SavedConnection>(value).unwrap(),
         connection
     );
+}
+
+#[test]
+fn connections_saved_before_engines_are_postgres() {
+    let saved = json!({
+        "id": "abc", "name": "old", "host": "localhost", "port": 5432,
+        "user": "postgres", "database": "postgres", "sslMode": "prefer",
+    });
+    let connection: SavedConnection = serde_json::from_value(saved).unwrap();
+    assert_eq!(
+        connection.engine,
+        dolmen_core::connections::Engine::Postgres
+    );
+    for (engine, name) in [
+        (dolmen_core::connections::Engine::MySql, "mysql"),
+        (dolmen_core::connections::Engine::Redis, "redis"),
+        (dolmen_core::connections::Engine::MongoDb, "mongodb"),
+        (dolmen_core::connections::Engine::DocumentDb, "documentdb"),
+    ] {
+        assert_eq!(serde_json::to_value(engine).unwrap(), json!(name));
+    }
 }
 
 #[test]

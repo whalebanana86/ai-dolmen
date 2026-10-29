@@ -31,6 +31,7 @@ export const ko: Messages = {
       developmentBuild: "개발용 빌드에는 업데이트를 설치할 수 없습니다. 릴리스에서 설치한 Dolmen으로 업데이트해 주세요.",
       tableChanged: "행을 읽은 뒤 테이블 구조가 바뀌었습니다. 쿼리를 다시 실행하세요.",
       rowChanged: "읽은 뒤 다른 곳에서 바뀌었거나 지워진 행이 있어 아무것도 저장하지 않았습니다.",
+      notSupported: "이 종류의 데이터베이스에서는 아직 쓸 수 없는 기능입니다.",
     },
     ai: {
       noApiKey: "아직 Anthropic API 키가 없습니다. AI를 쓰려면 설정(⚙)에서 키를 추가해 주세요.",
@@ -94,8 +95,13 @@ export const ko: Messages = {
   },
 
   connect: {
-    subtitle: "PostgreSQL",
+    subtitle: "PostgreSQL · MySQL · MariaDB · Redis · MongoDB · DocumentDB",
     newConnection: "+ 새 연결",
+    engine: "종류",
+    redisDatabase: "DB 번호",
+    optional: "선택",
+    documentDbTls:
+      "AWS DocumentDB는 TLS가 필수입니다. Amazon RDS 인증서를 이 컴퓨터가 신뢰하지 않으면 '필수'를 고르세요.",
     doubleClickToConnect: "더블클릭하면 연결",
     name: "이름",
     host: "호스트",
@@ -254,6 +260,17 @@ export const ko: Messages = {
       copySignature: "시그니처 복사",
       copyDefinition: "정의 복사",
       showCurrentValue: "현재 값 보기",
+    },
+    keys: {
+      filter: "키 패턴 (예: user:*)",
+      reload: "키 다시 읽기",
+      none: "키가 없습니다",
+      more: (n) => `처음 ${n}개만 보입니다. 패턴을 좁혀 보세요.`,
+      doubleClickToShow: "더블클릭하면 값 보기",
+      showValue: "값 보기",
+      showTtl: "남은 시간(TTL) 보기",
+      copyName: "키 이름 복사",
+      delete: "삭제(DEL)…",
     },
   },
 

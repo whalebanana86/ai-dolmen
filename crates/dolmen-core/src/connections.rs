@@ -26,6 +26,9 @@ pub struct SavedConnection {
     #[serde(default)]
     pub id: String,
     pub name: String,
+    /// Connections saved before Dolmen spoke other databases are PostgreSQL's.
+    #[serde(default)]
+    pub engine: Engine,
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -56,6 +59,32 @@ pub struct SavedConnection {
     /// Whether sessions start read-only. Unset, only production's do.
     #[serde(default)]
     pub read_only: Option<bool>,
+}
+
+/// The kind of server a connection is for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Engine {
+    #[default]
+    Postgres,
+    MySql,
+    MariaDb,
+    Redis,
+    MongoDb,
+    /// AWS DocumentDB or Microsoft's DocumentDB: MongoDB's protocol, with differences.
+    DocumentDb,
+}
+
+impl Engine {
+    /// The port its servers listen on unless told otherwise.
+    pub fn default_port(self) -> u16 {
+        match self {
+            Engine::Postgres => 5432,
+            Engine::MySql | Engine::MariaDb => 3306,
+            Engine::Redis => 6379,
+            Engine::MongoDb | Engine::DocumentDb => 27017,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

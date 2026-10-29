@@ -8,10 +8,11 @@
   <a href="https://github.com/whalebanana86/ai-dolmen/releases/latest"><b>⬇︎ Download (macOS · Windows · Linux)</b></a>
 </p>
 
-An open-source desktop app that connects to PostgreSQL, runs your SQL, lets you
-change results right in the grid, and **records every change to your tables'
-structure in Git**. It's an early version, and PostgreSQL is the only database
-it connects to so far.
+An open-source desktop app that connects to PostgreSQL, MySQL, MariaDB, Redis
+and MongoDB, runs your queries, lets you change results right in the grid, and
+**records every change to your tables' structure in Git**. It's an early
+version: Git history, query plans and editing results work with PostgreSQL only
+so far.
 
 ## What is it?
 
@@ -260,11 +261,16 @@ On Windows and Linux, use `Ctrl` for `⌘`.
 
 ## Databases
 
-| Database | Status |
+| Database | What works |
 |---|---|
-| PostgreSQL | Supported (v0.1) |
-| MySQL, MariaDB | Planned (v0.2) |
-| Redis, Valkey | Planned (v0.3) |
+| PostgreSQL | Everything: running SQL, the structure tree, details and ERD, editing results, plans, snapshots and Git, import and export |
+| MySQL, MariaDB | Running SQL, the structure tree, details and ERD, DDL from `SHOW CREATE`, read-only mode, cancelling |
+| Redis, Valkey | Commands (one a line), keys grouped by `:`, switching database numbers, read-only mode (write commands refused) |
+| MongoDB, DocumentDB | mongosh statements (`db.x.find(...)`, `aggregate`, `insertOne` and more), databases and collections in the tree (fields sampled from documents), read-only mode |
+
+Choose the database under **Kind** on the connection screen; the default port
+and user follow. AWS DocumentDB requires TLS: unless this computer trusts the
+Amazon RDS certificate, set the SSL mode to **Require**.
 
 ## Is my data safe?
 
@@ -300,6 +306,7 @@ On Windows and Linux, use `Ctrl` for `⌘`.
 |---|---|
 | App | Tauri 2 (Rust) + React 19 + TypeScript, with CodeMirror 6 for the editor |
 | Database | tokio-postgres. Each editor tab has its own connection; reading the structure and applying schema changes use another (`search_path=pg_catalog`). Values are shown in PostgreSQL's text format, so bigint and numeric keep their precision |
+| Other engines | MySQL and MariaDB through mysql_async (text protocol; `information_schema` read into the same model as PostgreSQL's), Redis through the redis crate (RESP3, else RESP2), MongoDB and DocumentDB through the official mongodb driver and Dolmen's own reader for mongosh statements |
 | Editing results | The statement is prepared again to learn each column's table and column number. Saving finds rows by primary key and locks optimistically, comparing the changed cells with the values read, as `format('%s', …)` writes them. Inside an open transaction it joins as a savepoint |
 | Schema snapshots | One DDL file per object, plus `dolmen-model.json`. The plan to apply one comes from comparing models, and runs in one transaction |
 | Storage | Saved connections in a JSON file in the app's config folder, passwords in the OS keychain (keyring), history and editor tabs in SQLite |
@@ -348,7 +355,17 @@ docker compose up -d   # PostgreSQL 18 on localhost:55432, user and password "po
 DOLMEN_TEST_PG_HOST=localhost DOLMEN_TEST_PG_PORT=55432 cargo test
 ```
 
-Without `DOLMEN_TEST_PG_HOST`, tests that need a server are skipped.
+Without `DOLMEN_TEST_PG_HOST`, tests that need a server are skipped. The other
+engines work the same way:
+
+```sh
+docker run -d --rm -e MYSQL_ROOT_PASSWORD=mysql -p 53306:3306 mysql:8.4
+DOLMEN_TEST_MYSQL_HOST=127.0.0.1 DOLMEN_TEST_MYSQL_PORT=53306 DOLMEN_TEST_MYSQL_PASSWORD=mysql cargo test -p dolmen-core --test mysql
+docker run -d --rm -p 56379:6379 redis:8
+DOLMEN_TEST_REDIS_HOST=localhost DOLMEN_TEST_REDIS_PORT=56379 cargo test -p dolmen-core --test redis
+docker run -d --rm -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD=example -p 57017:27017 mongo:8
+DOLMEN_TEST_MONGO_HOST=localhost DOLMEN_TEST_MONGO_PORT=57017 cargo test -p dolmen-core --test mongo
+```
 
 ### Releasing
 

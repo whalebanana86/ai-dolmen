@@ -3,9 +3,9 @@ import { basicSetup } from "codemirror";
 import { EditorView, keymap } from "@codemirror/view";
 import { Compartment, EditorState, Prec } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { PostgreSQL, SQLNamespace, sql } from "@codemirror/lang-sql";
+import { MariaSQL, MySQL, PostgreSQL, SQLNamespace, sql } from "@codemirror/lang-sql";
 import { tags } from "@lezer/highlight";
-import { Introspection } from "./api";
+import { Engine, Introspection } from "./api";
 import { useT } from "./settings";
 
 interface Props {
@@ -16,8 +16,10 @@ interface Props {
   /** ⌘K: ask AI. */
   /** ⌘K; without it, the editor keeps the key. */
   onAsk?: () => void;
-  /** Shows the plan of the statement at the cursor; measured, with ANALYZE. */
-  onExplain: (analyze: boolean) => void;
+  /** Shows the plan of the statement at the cursor; measured, with ANALYZE. Without it, the keys do nothing. */
+  onExplain?: (analyze: boolean) => void;
+  /** Which language the text is in: SQL dialects get highlighting and completion. */
+  engine?: Engine;
   onChange: (value: string) => void;
   /** Set to the editor view, so the parent can read text and selection when running. */
   viewRef: { current: EditorView | null };
@@ -40,6 +42,7 @@ export function SqlEditor({
   height,
   defaultSchema,
   hidden = false,
+  engine = "postgres",
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const t = useT();
@@ -77,6 +80,7 @@ export function SqlEditor({
               {
                 key: "Mod-e",
                 run: () => {
+                  if (!handlers.current.onExplain) return false;
                   handlers.current.onExplain(false);
                   return true;
                 },
@@ -84,6 +88,7 @@ export function SqlEditor({
               {
                 key: "Mod-Shift-e",
                 run: () => {
+                  if (!handlers.current.onExplain) return false;
                   handlers.current.onExplain(true);
                   return true;
                 },
@@ -91,7 +96,7 @@ export function SqlEditor({
             ]),
           ),
           basicSetup,
-          language.of(sqlLanguage(null, null)),
+          language.of(sqlLanguage(engine, null, null)),
           phrases.of(EditorState.phrases.of(t.editorPhrases)),
           syntaxHighlighting(highlightStyle),
           theme,
@@ -112,9 +117,9 @@ export function SqlEditor({
 
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: language.reconfigure(sqlLanguage(introspection, defaultSchema ?? null)),
+      effects: language.reconfigure(sqlLanguage(engine, introspection, defaultSchema ?? null)),
     });
-  }, [introspection, defaultSchema, language, viewRef]);
+  }, [engine, introspection, defaultSchema, language, viewRef]);
 
   // Back in sight, the editor measures itself again and takes the focus.
   useEffect(() => {
@@ -139,9 +144,12 @@ export function SqlEditor({
   );
 }
 
-function sqlLanguage(introspection: Introspection | null, defaultSchema: string | null) {
+/** SQL with completion for the SQL databases; Redis commands and mongosh statements stay plain text. */
+function sqlLanguage(engine: Engine, introspection: Introspection | null, defaultSchema: string | null) {
+  const dialect = { postgres: PostgreSQL, mysql: MySQL, mariadb: MariaSQL }[engine as string];
+  if (!dialect) return [];
   return sql({
-    dialect: PostgreSQL,
+    dialect,
     upperCaseKeywords: true,
     schema: introspection ? namespace(introspection) : undefined,
     defaultSchema: defaultSchema ?? introspection?.defaultSchema ?? undefined,
